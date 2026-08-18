@@ -1,6 +1,6 @@
 """
 app.py - Streamlit 網頁介面程式
-Version: v1.3.0_20260818
+Version: v1.3.1_20260818
 Description: 提供多檔 CAD 上傳、按鈕觸發辨識、預覽尺寸與 SVG 轉碼 3D 截圖，並支援匯出 Excel。
 """
 
@@ -9,10 +9,10 @@ import os
 import tempfile
 from cad_parser import parse_cad_with_screenshot, generate_excel_report
 
-st.set_page_config(page_title="CAD 報價辨識工具 (v1.3.0)", page_icon="⚙️", layout="centered")
+st.set_page_config(page_title="CAD 報價辨識工具 (v1.3.1)", page_icon="⚙️", layout="centered")
 
 st.title("⚙️ CAD 自動報價與尺寸辨識工具")
-st.caption("版本別：`v1.3.0_20260818` (方案 A 測試驗證版)")
+st.caption("版本別：`v1.3.1_20260818` (方案 A Cairo 修正版)")
 st.write("上傳 `.step` 或 `.igs` 3D 模型檔，點選下方按鈕自動辨識尺寸與擷取 3D 視角圖像。")
 
 uploaded_files = st.file_uploader(
