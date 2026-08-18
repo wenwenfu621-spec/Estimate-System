@@ -1,8 +1,8 @@
 """
 app.py - Streamlit 網頁介面程式
-Version: v1.4.0_20260818
+Version: v1.4.1_20260818
 Description: 提供多檔 CAD 上傳、按鈕觸發辨識、預覽尺寸與截圖，支援匯出 Excel，
-             並內嵌個人識別頭像徽章 (Design by Max)。
+             並修正個人識別頭像檔名大小寫匹配與 HTML 渲染問題 (Design by Max)。
 """
 
 import streamlit as st
@@ -13,8 +13,11 @@ from cad_parser import parse_cad_with_screenshot, generate_excel_report
 
 
 def inject_custom_footer():
-    """於頁面下方注入個人識別頭像與 Design by Max 徽章"""
-    avatar_candidates = ["avatar.jpg", "avatar.jpeg", "avatar.png", "avatar.JPG"]
+    """於頁面下方注入個人識別頭像與 Design by Max 徽章 (支援大小寫檔名相容)"""
+    avatar_candidates = [
+        "avatar.jpg", "avatar.jpeg", "avatar.png", "avatar.JPG", "avatar.PNG",
+        "Avatar.jpg", "Avatar.jpeg", "Avatar.png", "Avatar.JPG", "Avatar.PNG"
+    ]
     img_base64 = ""
     mime_type = "image/png"
 
@@ -63,10 +66,10 @@ def inject_custom_footer():
     st.markdown(footer_css, unsafe_allow_html=True)
 
 
-st.set_page_config(page_title="CAD 報價辨識工具 (v1.4.0)", page_icon="⚙️", layout="centered")
+st.set_page_config(page_title="CAD 報價辨識工具 (v1.4.1)", page_icon="⚙️", layout="centered")
 
 st.title("⚙️ CAD 自動報價與尺寸辨識工具")
-st.caption("版本別：`v1.4.0_20260818` (方案 B 穩定版 + 個人識別徽章)")
+st.caption("版本別：`v1.4.1_20260818` (頭像修正版 + 個人識別徽章)")
 st.write("上傳 `.step` 或 `.igs` 3D 模型檔，點選下方按鈕自動辨識尺寸與擷取 3D 視角圖像。")
 
 uploaded_files = st.file_uploader(
