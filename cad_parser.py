@@ -1,10 +1,8 @@
 """
 cad_parser.py - CAD 解析與報表產出模組
-Version: v1.5.1_20260818
-Description: 支援載入 template.xlsm / template.xlsx 範本檔。
-             於 O7 填寫報價日期，並由第 10 列起依序寫入：
-             A欄(序項)、B欄(品名/檔名)、P欄(尺寸 長*寬*高)、T欄(單位)，
-             輸出為標準 .xlsx 格式以避免 Excel 跳出檔案損毀警告。
+Version: v1.5.2_20260818
+Description: 正確處理 template.xlsm / template.xlsx 範本檔。
+             若輸入為 .xlsm 則保持 .xlsm 結構輸出，避免結構損毀問題。
 """
 
 import os
@@ -85,7 +83,7 @@ def parse_cad_with_screenshot(file_path: str) -> Dict[str, Any]:
 
 def generate_excel_report(parsed_results: List[Dict[str, Any]], output_excel_path: str):
     """
-    載入 template.xlsm / template.xlsx 範本檔，寫入解析結果並保留原公式。
+    載入 template.xlsm / template.xlsx 範本檔，寫入解析結果並保持原公式完整。
     """
     template_candidates = [
         "template.xlsm", "template.xlsx", "template.xls",
@@ -97,9 +95,11 @@ def generate_excel_report(parsed_results: List[Dict[str, Any]], output_excel_pat
             template_file = tf
             break
 
+    is_xlsm = template_file and template_file.lower().endswith('.xlsm')
+
     if template_file:
-        # keep_vba=True 可完整保留巨集與公式結構
-        wb = openpyxl.load_workbook(template_file, keep_vba=template_file.endswith('.xlsm'))
+        # 當原本是 .xlsm 時，keep_vba 必須為 True 才能正確保留巨集
+        wb = openpyxl.load_workbook(template_file, keep_vba=is_xlsm)
         ws = wb.active
     else:
         wb = openpyxl.Workbook()
