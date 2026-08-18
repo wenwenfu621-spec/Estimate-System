@@ -1,18 +1,19 @@
 """
 cad_parser.py - CAD 解析與報表產出模組
-Version: v1.4.0_20260818
-Description: 方案 B 容錯解耦版。優先保障長寬高幾何尺寸解析與 Excel 匯出。
-             截圖功能獨立防護，不因渲染例外而阻斷核心流程。
+Version: v1.5.0_20260818
+Description: 支援載入 template.xlsm / template.xlsx 範本檔。
+             於 O7 填寫報價日期，並由第 10 列起依序寫入：
+             A欄(序項)、B欄(品名/檔名)、P欄(尺寸 長*寬*高)、T欄(單位)，
+             並 100% 完整保留範本內的原始排版與計算公式。
 """
 
 import os
 import tempfile
+from datetime import datetime
 from typing import Dict, Any, List
 import cadquery as cq
 from PIL import Image
 import openpyxl
-from openpyxl.drawing.image import Image as OpenpyxlImage
-from openpyxl.styles import Alignment, Font, PatternFill, Border, Side
 
 
 def parse_cad_with_screenshot(file_path: str) -> Dict[str, Any]:
@@ -27,7 +28,7 @@ def parse_cad_with_screenshot(file_path: str) -> Dict[str, Any]:
     if ext not in valid_extensions:
         raise ValueError(f"不支援的格式 '{ext}'")
 
-    # 1. 核心幾何長寬高解析（最優先保護）
+    # 1. 核心幾何長寬高解析
     try:
         if ext in ('.step', '.stp'):
             model = cq.importers.importStep(file_path)
@@ -39,7 +40,9 @@ def parse_cad_with_screenshot(file_path: str) -> Dict[str, Any]:
         y_len = round(bbox.ylen, 2)
         z_len = round(bbox.zlen, 2)
         dims_sorted: List[float] = sorted([x_len, y_len, z_len], reverse=True)
-        dimensions_str = f"{dims_sorted[0]:.2f} x {dims_sorted[1]:.2f} x {dims_sorted[2]:.2f}"
+        
+        # 尺寸字串格式化為：長*寬*高
+        dimensions_str = f"{dims_sorted[0]:.2f}*{dims_sorted[1]:.2f}*{dims_sorted[2]:.2f}"
     except Exception as e:
         return {
             "status": "error",
@@ -47,7 +50,7 @@ def parse_cad_with_screenshot(file_path: str) -> Dict[str, Any]:
             "error_message": f"CAD 幾何解析失敗: {str(e)}"
         }
 
-    # 2. 獨立截圖流程（方案 B 容錯防護）
+    # 2. 獨立截圖流程 (方案 B 容錯防護)
     img_path = None
     try:
         img_tmp = tempfile.NamedTemporaryFile(delete=False, suffix='.png')
@@ -82,63 +85,48 @@ def parse_cad_with_screenshot(file_path: str) -> Dict[str, Any]:
 
 def generate_excel_report(parsed_results: List[Dict[str, Any]], output_excel_path: str):
     """
-    將解析結果寫入 Excel，包含：項次 / 檔名 / 3D視角截圖 / 長寬高 / 單位
+    載入 template.xlsm / template.xlsx 範本檔，寫入解析結果並保持原公式完整。
     """
-    wb = openpyxl.Workbook()
-    ws = wb.active
-    ws.title = "CAD報價尺寸表"
+    # 搜尋範本檔案
+    template_candidates = [
+        "template.xlsm", "template.xlsx", "template.xls",
+        "Template.xlsm", "Template.xlsx", "Template.xls"
+    ]
+    template_file = None
+    for tf in template_candidates:
+        if os.path.exists(tf):
+            template_file = tf
+            break
 
-    headers = ["項次", "檔名", "3D 視角截圖", "長寬高", "單位"]
-    ws.append(headers)
+    if template_file:
+        # 載入上傳的範本檔，保留巨集與公式 (keep_vba=True)
+        wb = openpyxl.load_workbook(template_file, keep_vba=template_file.endswith('.xlsm'))
+        ws = wb.active
+    else:
+        # 若未找到範本檔，自動建立標準工作表
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "報價單"
 
-    header_fill = PatternFill(start_color="1F4E78", end_color="1F4E78", fill_type="solid")
-    header_font = Font(name="微軟正黑體", size=11, bold=True, color="FFFFFF")
-    data_font = Font(name="微軟正黑體", size=10)
-    center_align = Alignment(horizontal="center", vertical="center")
-    thin_border = Border(
-        left=Side(style='thin', color='D9D9D9'),
-        right=Side(style='thin', color='D9D9D9'),
-        top=Side(style='thin', color='D9D9D9'),
-        bottom=Side(style='thin', color='D9D9D9')
-    )
+    # 1. 填入當天報價日期於 O7 欄位
+    today_str = datetime.now().strftime("%Y/%m/%d")
+    ws['O7'] = today_str
 
-    ws.column_dimensions['A'].width = 8   # 項次
-    ws.column_dimensions['B'].width = 25  # 檔名
-    ws.column_dimensions['C'].width = 16  # 3D 視角截圖
-    ws.column_dimensions['D'].width = 22  # 長寬高
-    ws.column_dimensions['E'].width = 10  # 單位
-
-    for col_num in range(1, 6):
-        cell = ws.cell(row=1, column=col_num)
-        cell.fill = header_fill
-        cell.font = header_font
-        cell.alignment = center_align
-
-    for idx, item in enumerate(parsed_results, start=1):
-        row_num = idx + 1
-        ws.row_dimensions[row_num].height = 70
-
-        ws.cell(row=row_num, column=1, value=idx)
+    # 2. 從第 10 列起逐筆填入資料
+    start_row = 10
+    for idx, item in enumerate(parsed_results):
+        row_num = start_row + idx
+        
+        # A 欄: 序項 (1, 2, 3...)
+        ws.cell(row=row_num, column=1, value=idx + 1)
+        
+        # B 欄: 品名 (上傳的 CAD 檔名)
         ws.cell(row=row_num, column=2, value=item.get("file_name", ""))
-        ws.cell(row=row_num, column=4, value=item.get("dimensions_str", ""))
-        ws.cell(row=row_num, column=5, value=item.get("unit", "mm"))
-
-        for col_num in range(1, 6):
-            cell = ws.cell(row=row_num, column=col_num)
-            cell.font = data_font
-            cell.alignment = center_align
-            cell.border = thin_border
-
-        img_path = item.get("image_path")
-        if img_path and os.path.exists(img_path):
-            try:
-                img = OpenpyxlImage(img_path)
-                img.width = 90
-                img.height = 60
-                ws.add_image(img, f"C{row_num}")
-            except Exception:
-                ws.cell(row=row_num, column=3, value="[無預覽圖]")
-        else:
-            ws.cell(row=row_num, column=3, value="[無預覽圖]")
+        
+        # P 欄: 尺寸 (長*寬*高)
+        ws.cell(row=row_num, column=16, value=item.get("dimensions_str", ""))
+        
+        # T 欄: 單位 (mm)
+        ws.cell(row=row_num, column=20, value=item.get("unit", "mm"))
 
     wb.save(output_excel_path)
