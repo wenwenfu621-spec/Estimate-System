@@ -1,8 +1,10 @@
 """
 cad_parser.py - CAD 解析與報表產出模組
-Version: v1.5.2_20260818
-Description: 正確處理 template.xlsm / template.xlsx 範本檔。
-             若輸入為 .xlsm 則保持 .xlsm 結構輸出，避免結構損毀問題。
+Version: v1.5.3_20260818
+Description: 支援載入 template.xlsm / template.xlsx 範本檔。
+             於 O7 填寫報價日期，並由第 10 列起依序寫入：
+             A欄(序項)、B欄(品名/檔名)、P欄(尺寸 長*寬*高)、Q欄(單位 mm)，
+             輸出為相容格式以保護原始公式與排版。
 """
 
 import os
@@ -98,7 +100,6 @@ def generate_excel_report(parsed_results: List[Dict[str, Any]], output_excel_pat
     is_xlsm = template_file and template_file.lower().endswith('.xlsm')
 
     if template_file:
-        # 當原本是 .xlsm 時，keep_vba 必須為 True 才能正確保留巨集
         wb = openpyxl.load_workbook(template_file, keep_vba=is_xlsm)
         ws = wb.active
     else:
@@ -124,7 +125,7 @@ def generate_excel_report(parsed_results: List[Dict[str, Any]], output_excel_pat
         # P 欄: 尺寸 (長*寬*高)
         ws.cell(row=row_num, column=16, value=item.get("dimensions_str", ""))
         
-        # T 欄: 單位 (mm)
-        ws.cell(row=row_num, column=20, value=item.get("unit", "mm"))
+        # Q 欄: 單位 (mm) [由原本 T欄 改為 Q欄/Column 17]
+        ws.cell(row=row_num, column=17, value=item.get("unit", "mm"))
 
     wb.save(output_excel_path)
