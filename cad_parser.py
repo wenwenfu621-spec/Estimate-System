@@ -1,10 +1,10 @@
 """
 cad_parser.py - CAD 解析與報表產出模組
-Version: v1.5.0_20260818
+Version: v1.5.1_20260818
 Description: 支援載入 template.xlsm / template.xlsx 範本檔。
              於 O7 填寫報價日期，並由第 10 列起依序寫入：
              A欄(序項)、B欄(品名/檔名)、P欄(尺寸 長*寬*高)、T欄(單位)，
-             並 100% 完整保留範本內的原始排版與計算公式。
+             輸出為標準 .xlsx 格式以避免 Excel 跳出檔案損毀警告。
 """
 
 import os
@@ -85,9 +85,8 @@ def parse_cad_with_screenshot(file_path: str) -> Dict[str, Any]:
 
 def generate_excel_report(parsed_results: List[Dict[str, Any]], output_excel_path: str):
     """
-    載入 template.xlsm / template.xlsx 範本檔，寫入解析結果並保持原公式完整。
+    載入 template.xlsm / template.xlsx 範本檔，寫入解析結果並保留原公式。
     """
-    # 搜尋範本檔案
     template_candidates = [
         "template.xlsm", "template.xlsx", "template.xls",
         "Template.xlsm", "Template.xlsx", "Template.xls"
@@ -99,11 +98,10 @@ def generate_excel_report(parsed_results: List[Dict[str, Any]], output_excel_pat
             break
 
     if template_file:
-        # 載入上傳的範本檔，保留巨集與公式 (keep_vba=True)
+        # keep_vba=True 可完整保留巨集與公式結構
         wb = openpyxl.load_workbook(template_file, keep_vba=template_file.endswith('.xlsm'))
         ws = wb.active
     else:
-        # 若未找到範本檔，自動建立標準工作表
         wb = openpyxl.Workbook()
         ws = wb.active
         ws.title = "報價單"
