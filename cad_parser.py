@@ -25,8 +25,12 @@ def parse_cad_bounding_box(file_path: str) -> Dict[str, Any]:
         raise ValueError(f"不支援的檔案格式 '{ext}'。僅支援：{', '.join(valid_extensions)}")
 
     try:
-        # 載入 3D 模型
-        model = cq.importers.importShape(file_path)
+        # 根據副檔名選擇合適的匯入函式 (相容所有 CadQuery 版本)
+        if ext in ('.step', '.stp'):
+            model = cq.importers.importStep(file_path)
+        else:
+            # .igs / .iges 格式
+            model = cq.importers.importDXF(file_path) if hasattr(cq.importers, 'importIGES') is False else cq.importers.importShape(cq.importers.ImportTypes.IGES, file_path)
 
         # 取得 Bounding Box
         bbox = model.val().BoundingBox()
