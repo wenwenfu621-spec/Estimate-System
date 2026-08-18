@@ -1,8 +1,8 @@
 """
 app.py - Streamlit 網頁介面程式
-Version: v1.5.2_20260818
+Version: v1.5.3_20260818
 Description: 提供多檔 CAD 上傳、按鈕觸發辨識，自動套印至 template.xlsm 範本，
-             自動判斷 .xlsm / .xlsx 副檔名輸出，包含個人識別頭像徽章 (Design by Max)。
+             調整單位填寫自 Q10 起，包含個人識別頭像徽章 (Design by Max)。
 """
 
 import streamlit as st
@@ -66,10 +66,10 @@ def inject_custom_footer():
     st.markdown(footer_css, unsafe_allow_html=True)
 
 
-st.set_page_config(page_title="CAD 報價辨識工具 (v1.5.2)", page_icon="⚙️", layout="centered")
+st.set_page_config(page_title="CAD 報價辨識工具 (v1.5.3)", page_icon="⚙️", layout="centered")
 
 st.title("⚙️ CAD 自動報價與尺寸辨識工具")
-st.caption("版本別：`v1.5.2_20260818` (Excel xlsm 格式修正版)")
+st.caption("版本別：`v1.5.3_20260818` (單位寫入 Q 欄修正版)")
 st.write("上傳 `.step` 或 `.igs` 3D 模型檔，點選下方按鈕自動辨識尺寸並套寫至 Excel 報價單。")
 
 uploaded_files = st.file_uploader(
@@ -115,7 +115,6 @@ if uploaded_files:
             else:
                 st.error(f"❌ {res['file_name']} 解析失敗：{res.get('error_message')}")
 
-        # 自動判斷是否存在 template.xlsm
         has_xlsm_template = os.path.exists("template.xlsm") or os.path.exists("Template.xlsm")
         export_ext = ".xlsm" if has_xlsm_template else ".xlsx"
         mime_type = "application/vnd.ms-excel.sheet.macroEnabled.12" if has_xlsm_template else "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
