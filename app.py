@@ -1,8 +1,8 @@
 """
 app.py - Streamlit 網頁介面程式
-Version: v1.4.1_20260818
-Description: 提供多檔 CAD 上傳、按鈕觸發辨識、預覽尺寸與截圖，支援匯出 Excel，
-             並修正個人識別頭像檔名大小寫匹配與 HTML 渲染問題 (Design by Max)。
+Version: v1.5.0_20260818
+Description: 提供多檔 CAD 上傳、按鈕觸發辨識，自動套印至 template.xlsm 範本，
+             保留原始公式並匯出報價單，含個人識別頭像徽章 (Design by Max)。
 """
 
 import streamlit as st
@@ -13,7 +13,7 @@ from cad_parser import parse_cad_with_screenshot, generate_excel_report
 
 
 def inject_custom_footer():
-    """於頁面下方注入個人識別頭像與 Design by Max 徽章 (支援大小寫檔名相容)"""
+    """於頁面下方注入個人識別頭像與 Design by Max 徽章"""
     avatar_candidates = [
         "avatar.jpg", "avatar.jpeg", "avatar.png", "avatar.JPG", "avatar.PNG",
         "Avatar.jpg", "Avatar.jpeg", "Avatar.png", "Avatar.JPG", "Avatar.PNG"
@@ -66,11 +66,11 @@ def inject_custom_footer():
     st.markdown(footer_css, unsafe_allow_html=True)
 
 
-st.set_page_config(page_title="CAD 報價辨識工具 (v1.4.1)", page_icon="⚙️", layout="centered")
+st.set_page_config(page_title="CAD 報價辨識工具 (v1.5.0)", page_icon="⚙️", layout="centered")
 
 st.title("⚙️ CAD 自動報價與尺寸辨識工具")
-st.caption("版本別：`v1.4.1_20260818` (頭像修正版 + 個人識別徽章)")
-st.write("上傳 `.step` 或 `.igs` 3D 模型檔，點選下方按鈕自動辨識尺寸與擷取 3D 視角圖像。")
+st.caption("版本別：`v1.5.0_20260818` (Excel 範本套印版)")
+st.write("上傳 `.step` 或 `.igs` 3D 模型檔，點選下方按鈕自動辨識尺寸並套寫至 Excel 報價單。")
 
 uploaded_files = st.file_uploader(
     "上傳 CAD 圖檔 (可多選)", 
@@ -103,27 +103,19 @@ if uploaded_files:
 
             progress_bar.progress((idx + 1) / len(uploaded_files))
 
-        status_text.success("🎉 所有檔案辨識完成！")
+        status_text.success("🎉 所有檔案辨識完成！已自動套用範本檔填入數據。")
 
         st.subheader("📋 辨識結果預覽")
         for res in parsed_results:
             if res.get("status") == "success":
-                with st.expander(f"📄 {res['file_name']} - 【{res['dimensions_str']} mm】"):
-                    col1, col2 = st.columns([1, 2])
-                    with col1:
-                        img_p = res.get("image_path")
-                        if img_p and os.path.exists(img_p):
-                            st.image(img_p, caption="3D 視角縮圖", width=150)
-                        else:
-                            st.info("無 3D 預覽圖")
-                    with col2:
-                        st.write(f"**檔名**：{res['file_name']}")
-                        st.write(f"**長寬高**：{res['dimensions_str']}")
-                        st.write(f"**單位**：{res['unit']}")
+                with st.expander(f"📄 {res['file_name']} - 【尺寸：{res['dimensions_str']} mm】"):
+                    st.write(f"**品名 (檔名)**：{res['file_name']}")
+                    st.write(f"**尺寸 (長*寬*高)**：{res['dimensions_str']}")
+                    st.write(f"**單位**：{res['unit']}")
             else:
                 st.error(f"❌ {res['file_name']} 解析失敗：{res.get('error_message')}")
 
-        excel_tmp = tempfile.NamedTemporaryFile(delete=False, suffix='.xlsx')
+        excel_tmp = tempfile.NamedTemporaryFile(delete=False, suffix='.xlsm')
         excel_path = excel_tmp.name
         excel_tmp.close()
 
@@ -134,10 +126,10 @@ if uploaded_files:
 
         st.markdown("---")
         st.download_button(
-            label="📊 下載 CAD 辨識結果 Excel 報表 (.xlsx)",
+            label="📊 下載完整 CAD 報價單 Excel 檔 (.xlsm)",
             data=excel_bytes,
-            file_name="CAD_Quotation_Report.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            file_name="CAD_Quotation_Report.xlsm",
+            mime="application/vnd.ms-excel.sheet.macroEnabled.12"
         )
 
         if os.path.exists(excel_path):
