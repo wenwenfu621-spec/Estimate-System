@@ -1,7 +1,8 @@
 """
 cad_parser.py - CAD 解析與報表產出模組
-Version: v1.2.0_20260818
-Description: 支援 .step/.igs 解析長寬高、等角視角截圖繪製，並產出包含圖片的 Excel 報表。
+Version: v1.2.1_20260818
+Description: 採用方案 B 容錯機制。將「長寬高尺寸計算」與「3D 截圖繪製」完全解耦。
+             即便截圖繪製失敗，依然 100% 保障長寬高解析與 Excel 報表匯出。
 """
 
 import os
@@ -16,7 +17,7 @@ from openpyxl.styles import Alignment, Font, PatternFill, Border, Side
 
 def parse_cad_with_screenshot(file_path: str) -> Dict[str, Any]:
     """
-    讀取 CAD 檔案，提取邊界尺寸並生成 3D 視角截圖。
+    讀取 CAD 檔案，提取邊界尺寸，並以容錯機制嘗試生成 3D 視角截圖。
     """
     if not os.path.exists(file_path):
         raise FileNotFoundError(f"找不到檔案：{file_path}")
@@ -26,54 +27,61 @@ def parse_cad_with_screenshot(file_path: str) -> Dict[str, Any]:
     if ext not in valid_extensions:
         raise ValueError(f"不支援的格式 '{ext}'")
 
+    # 1. 核心解析：取得長寬高尺寸（最優先保護）
     try:
-        # 1. 匯入 CAD 模型
         if ext in ('.step', '.stp'):
             model = cq.importers.importStep(file_path)
         else:
             model = cq.importers.importShape(cq.importers.ImportTypes.IGES, file_path)
 
-        # 2. 取得 Bounding Box 尺寸 (單位: mm)
         bbox = model.val().BoundingBox()
         x_len = round(bbox.xlen, 2)
         y_len = round(bbox.ylen, 2)
         z_len = round(bbox.zlen, 2)
         dims_sorted: List[float] = sorted([x_len, y_len, z_len], reverse=True)
+        dimensions_str = f"{dims_sorted[0]:.2f} x {dims_sorted[1]:.2f} x {dims_sorted[2]:.2f}"
+    except Exception as e:
+        # 長寬高解析失敗時才回傳錯誤
+        return {
+            "status": "error",
+            "file_name": os.path.basename(file_path),
+            "error_message": f"CAD 幾何解析失敗: {str(e)}"
+        }
 
-        # 3. 生成 3D 視角截圖 (等角視角 Isometric)
+    # 2. 獨立截圖流程（方案 B：加裝容錯防護）
+    img_path = None
+    try:
         img_tmp = tempfile.NamedTemporaryFile(delete=False, suffix='.png')
-        img_path = img_tmp.name
+        img_path_candidate = img_tmp.name
         img_tmp.close()
 
-        # 匯出為 SVG 後轉成 PNG 縮圖
         svg_tmp = tempfile.NamedTemporaryFile(delete=False, suffix='.svg')
         svg_path = svg_tmp.name
         svg_tmp.close()
 
+        # 嘗試匯出 SVG 視角
         cq.exporters.export(model, svg_path, opt={"projectionDir": (1, 1, 1), "showHidden": False})
-        
-        # 轉換為標準尺寸圖片 (寬 400x300 px)
+
+        # 嘗試讀取並轉存 PNG
         with Image.open(svg_path) as img:
             img_resized = img.resize((400, 300))
-            img_resized.save(img_path, format="PNG")
+            img_resized.save(img_path_candidate, format="PNG")
+
+        img_path = img_path_candidate
 
         if os.path.exists(svg_path):
             os.remove(svg_path)
+    except Exception:
+        # 截圖失敗時自動忽略例外，維持圖片為 None，不影響尺寸資料
+        img_path = None
 
-        return {
-            "status": "success",
-            "file_name": os.path.basename(file_path),
-            "dimensions_str": f"{dims_sorted[0]:.2f} x {dims_sorted[1]:.2f} x {dims_sorted[2]:.2f}",
-            "unit": "mm",
-            "image_path": img_path
-        }
-
-    except Exception as e:
-        return {
-            "status": "error",
-            "file_name": os.path.basename(file_path),
-            "error_message": str(e)
-        }
+    return {
+        "status": "success",
+        "file_name": os.path.basename(file_path),
+        "dimensions_str": dimensions_str,
+        "unit": "mm",
+        "image_path": img_path
+    }
 
 
 def generate_excel_report(parsed_results: List[Dict[str, Any]], output_excel_path: str):
@@ -84,7 +92,6 @@ def generate_excel_report(parsed_results: List[Dict[str, Any]], output_excel_pat
     ws = wb.active
     ws.title = "CAD報價尺寸表"
 
-    # 表頭設定
     headers = ["項次", "檔名", "3D 視角截圖", "長寬高", "單位"]
     ws.append(headers)
 
@@ -100,25 +107,20 @@ def generate_excel_report(parsed_results: List[Dict[str, Any]], output_excel_pat
         bottom=Side(style='thin', color='D9D9D9')
     )
 
-    # 設定欄寬
     ws.column_dimensions['A'].width = 8   # 項次
     ws.column_dimensions['B'].width = 25  # 檔名
-    ws.column_dimensions['C'].width = 16  # 3D 視角截圖 (縮圖預留)
+    ws.column_dimensions['C'].width = 16  # 3D 視角截圖
     ws.column_dimensions['D'].width = 22  # 長寬高
     ws.column_dimensions['E'].width = 10  # 單位
 
-    # 美化表頭
     for col_num in range(1, 6):
         cell = ws.cell(row=1, column=col_num)
         cell.fill = header_fill
         cell.font = header_font
         cell.alignment = center_align
 
-    # 寫入資料列
     for idx, item in enumerate(parsed_results, start=1):
         row_num = idx + 1
-        
-        # 設定固定列高 (70pt 容納圖片)
         ws.row_dimensions[row_num].height = 70
 
         ws.cell(row=row_num, column=1, value=idx)
@@ -126,21 +128,23 @@ def generate_excel_report(parsed_results: List[Dict[str, Any]], output_excel_pat
         ws.cell(row=row_num, column=4, value=item.get("dimensions_str", ""))
         ws.cell(row=row_num, column=5, value=item.get("unit", "mm"))
 
-        # 套用儲存格格式
         for col_num in range(1, 6):
             cell = ws.cell(row=row_num, column=col_num)
             cell.font = data_font
             cell.alignment = center_align
             cell.border = thin_border
 
-        # 插入 3D 視角截圖 (控制尺寸：寬 90px, 高 60px)
+        # 插入 3D 視角截圖（若截圖失敗則寫入文字提示）
         img_path = item.get("image_path")
         if img_path and os.path.exists(img_path):
-            img = OpenpyxlImage(img_path)
-            img.width = 90
-            img.height = 60
-            # 放置於 C 欄對應格
-            cell_address = f"C{row_num}"
-            ws.add_image(img, cell_address)
+            try:
+                img = OpenpyxlImage(img_path)
+                img.width = 90
+                img.height = 60
+                ws.add_image(img, f"C{row_num}")
+            except Exception:
+                ws.cell(row=row_num, column=3, value="[無預覽圖]")
+        else:
+            ws.cell(row=row_num, column=3, value="[無預覽圖]")
 
     wb.save(output_excel_path)
