@@ -1,8 +1,8 @@
 """
 cad_parser.py - CAD 解析與報表產出模組
-Version: v1.2.1_20260818
-Description: 採用方案 B 容錯機制。將「長寬高尺寸計算」與「3D 截圖繪製」完全解耦。
-             即便截圖繪製失敗，依然 100% 保障長寬高解析與 Excel 報表匯出。
+Version: v1.3.0_20260818
+Description: 方案 A 測試驗證版。使用 svglib 與 reportlab 將 CadQuery 輸出的 SVG
+             向量圖正確渲染為 PNG 點陣圖，以支援 3D 預覽圖與 Excel 報表內嵌。
 """
 
 import os
@@ -14,10 +14,14 @@ import openpyxl
 from openpyxl.drawing.image import Image as OpenpyxlImage
 from openpyxl.styles import Alignment, Font, PatternFill, Border, Side
 
+# 方案 A 專用：SVG 轉點陣圖渲染套件
+from svglib.svglib import svg2rlg
+from reportlab.graphics import renderPM
+
 
 def parse_cad_with_screenshot(file_path: str) -> Dict[str, Any]:
     """
-    讀取 CAD 檔案，提取邊界尺寸，並以容錯機制嘗試生成 3D 視角截圖。
+    讀取 CAD 檔案，提取邊界尺寸，並透過 svglib 繪製 3D 視角縮圖。
     """
     if not os.path.exists(file_path):
         raise FileNotFoundError(f"找不到檔案：{file_path}")
@@ -27,8 +31,8 @@ def parse_cad_with_screenshot(file_path: str) -> Dict[str, Any]:
     if ext not in valid_extensions:
         raise ValueError(f"不支援的格式 '{ext}'")
 
-    # 1. 核心解析：取得長寬高尺寸（最優先保護）
     try:
+        # 1. 匯入 CAD 模型並計算長寬高
         if ext in ('.step', '.stp'):
             model = cq.importers.importStep(file_path)
         else:
@@ -40,48 +44,48 @@ def parse_cad_with_screenshot(file_path: str) -> Dict[str, Any]:
         z_len = round(bbox.zlen, 2)
         dims_sorted: List[float] = sorted([x_len, y_len, z_len], reverse=True)
         dimensions_str = f"{dims_sorted[0]:.2f} x {dims_sorted[1]:.2f} x {dims_sorted[2]:.2f}"
-    except Exception as e:
-        # 長寬高解析失敗時才回傳錯誤
-        return {
-            "status": "error",
-            "file_name": os.path.basename(file_path),
-            "error_message": f"CAD 幾何解析失敗: {str(e)}"
-        }
 
-    # 2. 獨立截圖流程（方案 B：加裝容錯防護）
-    img_path = None
-    try:
+        # 2. 方案 A 截圖渲染：匯出 SVG ➔ 透過 svglib/reportlab 轉為 PNG
         img_tmp = tempfile.NamedTemporaryFile(delete=False, suffix='.png')
-        img_path_candidate = img_tmp.name
+        img_path = img_tmp.name
         img_tmp.close()
 
         svg_tmp = tempfile.NamedTemporaryFile(delete=False, suffix='.svg')
         svg_path = svg_tmp.name
         svg_tmp.close()
 
-        # 嘗試匯出 SVG 視角
+        # 匯出等角視角 SVG
         cq.exporters.export(model, svg_path, opt={"projectionDir": (1, 1, 1), "showHidden": False})
 
-        # 嘗試讀取並轉存 PNG
-        with Image.open(svg_path) as img:
-            img_resized = img.resize((400, 300))
-            img_resized.save(img_path_candidate, format="PNG")
+        # 解析 SVG 並渲染為 PNG
+        drawing = svg2rlg(svg_path)
+        if drawing is not None:
+            renderPM.drawToFile(drawing, img_path, fmt="PNG")
 
-        img_path = img_path_candidate
+            # 調整圖片尺寸 (400x300 px)
+            with Image.open(img_path) as img:
+                img_resized = img.resize((400, 300))
+                img_resized.save(img_path, format="PNG")
+        else:
+            img_path = None
 
         if os.path.exists(svg_path):
             os.remove(svg_path)
-    except Exception:
-        # 截圖失敗時自動忽略例外，維持圖片為 None，不影響尺寸資料
-        img_path = None
 
-    return {
-        "status": "success",
-        "file_name": os.path.basename(file_path),
-        "dimensions_str": dimensions_str,
-        "unit": "mm",
-        "image_path": img_path
-    }
+        return {
+            "status": "success",
+            "file_name": os.path.basename(file_path),
+            "dimensions_str": dimensions_str,
+            "unit": "mm",
+            "image_path": img_path
+        }
+
+    except Exception as e:
+        return {
+            "status": "error",
+            "file_name": os.path.basename(file_path),
+            "error_message": str(e)
+        }
 
 
 def generate_excel_report(parsed_results: List[Dict[str, Any]], output_excel_path: str):
@@ -134,7 +138,7 @@ def generate_excel_report(parsed_results: List[Dict[str, Any]], output_excel_pat
             cell.alignment = center_align
             cell.border = thin_border
 
-        # 插入 3D 視角截圖（若截圖失敗則寫入文字提示）
+        # 插入 3D 視角截圖
         img_path = item.get("image_path")
         if img_path and os.path.exists(img_path):
             try:
