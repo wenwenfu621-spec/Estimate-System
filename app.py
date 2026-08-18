@@ -1,18 +1,72 @@
 """
 app.py - Streamlit 網頁介面程式
-Version: v1.3.1_20260818
-Description: 提供多檔 CAD 上傳、按鈕觸發辨識、預覽尺寸與 SVG 轉碼 3D 截圖，並支援匯出 Excel。
+Version: v1.4.0_20260818
+Description: 提供多檔 CAD 上傳、按鈕觸發辨識、預覽尺寸與截圖，支援匯出 Excel，
+             並內嵌個人識別頭像徽章 (Design by Max)。
 """
 
 import streamlit as st
 import os
 import tempfile
+import base64
 from cad_parser import parse_cad_with_screenshot, generate_excel_report
 
-st.set_page_config(page_title="CAD 報價辨識工具 (v1.3.1)", page_icon="⚙️", layout="centered")
+
+def inject_custom_footer():
+    """於頁面下方注入個人識別頭像與 Design by Max 徽章"""
+    avatar_candidates = ["avatar.jpg", "avatar.jpeg", "avatar.png", "avatar.JPG"]
+    img_base64 = ""
+    mime_type = "image/png"
+
+    for af in avatar_candidates:
+        if os.path.exists(af):
+            with open(af, "rb") as img_f:
+                img_base64 = base64.b64encode(img_f.read()).decode("utf-8")
+                if af.lower().endswith((".jpg", ".jpeg")):
+                    mime_type = "image/jpeg"
+                else:
+                    mime_type = "image/png"
+            break
+
+    avatar_html = f'<img src="data:{mime_type};base64,{img_base64}" style="width: 36px; height: 36px; border-radius: 50%; object-fit: cover; margin-right: 8px; border: 1.5px solid #ccc; background-color: #fff;">' if img_base64 else ""
+
+    footer_css = f"""
+    <style>
+    .custom-footer-max {{
+        position: fixed;
+        bottom: 16px;
+        left: 50%;
+        transform: translateX(-50%);
+        display: flex;
+        align-items: center;
+        background-color: rgba(255, 255, 255, 0.95);
+        padding: 4px 14px;
+        border-radius: 20px;
+        box-shadow: 0px 2px 8px rgba(0, 0, 0, 0.15);
+        z-index: 999999;
+        pointer-events: none;
+    }}
+    .custom-footer-text {{
+        font-family: 'Comic Sans MS', cursive, sans-serif;
+        font-weight: bold;
+        font-style: italic;
+        font-size: 0.95rem;
+        color: #333333;
+        white-space: nowrap;
+    }}
+    </style>
+    <div class="custom-footer-max">
+        {avatar_html}
+        <span class="custom-footer-text">Design by Max</span>
+    </div>
+    """
+    st.markdown(footer_css, unsafe_allow_html=True)
+
+
+st.set_page_config(page_title="CAD 報價辨識工具 (v1.4.0)", page_icon="⚙️", layout="centered")
 
 st.title("⚙️ CAD 自動報價與尺寸辨識工具")
-st.caption("版本別：`v1.3.1_20260818` (方案 A Cairo 修正版)")
+st.caption("版本別：`v1.4.0_20260818` (方案 B 穩定版 + 個人識別徽章)")
 st.write("上傳 `.step` 或 `.igs` 3D 模型檔，點選下方按鈕自動辨識尺寸與擷取 3D 視角圖像。")
 
 uploaded_files = st.file_uploader(
@@ -89,3 +143,6 @@ if uploaded_files:
             img_p = res.get("image_path")
             if img_p and os.path.exists(img_p):
                 os.remove(img_p)
+
+# 載入頁尾個人識別頭像徽章
+inject_custom_footer()
