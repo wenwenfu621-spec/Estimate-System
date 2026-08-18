@@ -1,8 +1,8 @@
 """
 cad_parser.py - CAD 解析與報表產出模組
-Version: v1.3.0_20260818
-Description: 方案 A 測試驗證版。使用 svglib 與 reportlab 將 CadQuery 輸出的 SVG
-             向量圖正確渲染為 PNG 點陣圖，以支援 3D 預覽圖與 Excel 報表內嵌。
+Version: v1.3.1_20260818
+Description: 方案 A 測試驗證版（Cairo 系統庫補齊版）。使用 svglib 與 reportlab 將 CadQuery
+             輸出的 SVG 向量圖轉換為 PNG 點陣圖，以支援 3D 預覽圖與 Excel 報表內嵌。
 """
 
 import os
