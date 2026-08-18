@@ -5,3 +5,6 @@ libsm6
 libxext6
 libxrender-dev
 xvfb
+libcairo2
+libcairo2-dev
+pkg-config
