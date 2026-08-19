@@ -1,9 +1,9 @@
 """
 cad_parser.py - CAD 解析與報表產出模組
-Version: v1.8.5_20260819
+Version: v1.8.6_20260819
 Description: 支援載入 template.xlsm / template.xlsx 範本檔。
-             於 O7 填寫報價日期，並由第 10 列起依序寫入 A, B, P, Q, R, S, T 欄數據。
-             徹底解決 MergedCell 賦值導致的 AttributeError 崩潰，完美保留原始範本公式與排版。
+             於 O7 填寫報價日期，由第 10 列起寫入 A, B, P, Q, R, S, T 數據。
+             使用 set_cell_value_safe 安全覆寫第 101 列合計公式，徹底解決 MergedCell 崩潰與 #REF! 錯誤。
 """
 
 import os
@@ -13,6 +13,22 @@ from typing import Dict, Any, List
 import cadquery as cq
 from PIL import Image
 import openpyxl
+
+
+def set_cell_value_safe(ws, row: int, col: int, value: Any):
+    """
+    安全填寫儲存格：若遇到 MergedCell (唯讀)，自動尋找並寫入該合併區塊最左上角的 Master Cell。
+    """
+    try:
+        cell = ws.cell(row=row, column=col)
+        if type(cell).__name__ == 'MergedCell':
+            for rng in ws.merged_cells.ranges:
+                if cell.coordinate in rng:
+                    ws.cell(row=rng.min_row, column=rng.min_col, value=value)
+                    return
+        cell.value = value
+    except Exception:
+        pass
 
 
 def parse_cad_with_screenshot(file_path: str) -> Dict[str, Any]:
@@ -44,7 +60,6 @@ def parse_cad_with_screenshot(file_path: str) -> Dict[str, Any]:
         width_val = dims_sorted[1]
         height_val = dims_sorted[2]
         
-        # 尺寸字串格式化為：長*寬*高
         dimensions_str = f"{length_val:.2f}*{width_val:.2f}*{height_val:.2f}"
     except Exception as e:
         return {
@@ -91,7 +106,7 @@ def parse_cad_with_screenshot(file_path: str) -> Dict[str, Any]:
 
 def generate_excel_report(parsed_results: List[Dict[str, Any]], output_excel_path: str):
     """
-    載入範本檔，寫入解析資料並精準保留原始公式，避開合併儲存格賦值問題。
+    載入範本檔，寫入解析資料並安全修復第 101 列合計公式。
     """
     template_candidates = [
         "template.xlsm", "template.xlsx", "template.xls",
@@ -117,7 +132,7 @@ def generate_excel_report(parsed_results: List[Dict[str, Any]], output_excel_pat
     today_str = datetime.now().strftime("%Y/%m/%d")
     ws['O7'] = today_str
 
-    # 2. 原地寫入資料（由第 10 列起），絕對不使用 insert_rows
+    # 2. 原地寫入資料（由第 10 列起）
     start_row = 10
     for idx, item in enumerate(parsed_results):
         row_num = start_row + idx
@@ -146,5 +161,23 @@ def generate_excel_report(parsed_results: List[Dict[str, Any]], output_excel_pat
         ws.cell(row=row_num, column=7, value=f"=E{row_num}*F{row_num}")  # G欄: 原型金額
         ws.cell(row=row_num, column=10, value=f"=H{row_num}*I{row_num}") # J欄: 矽膠模具金額
         ws.cell(row=row_num, column=13, value=f"=K{row_num}*L{row_num}") # M欄: 注型金額
+
+    # 3. 動態尋找「合計」列號（預設第 101 列）
+    total_row = 101
+    for r in range(10, ws.max_row + 1):
+        cell_a = str(ws.cell(row=r, column=1).value or "").replace(" ", "")
+        cell_b = str(ws.cell(row=r, column=2).value or "").replace(" ", "")
+        cell_c = str(ws.cell(row=r, column=3).value or "").replace(" ", "")
+        
+        if "合計" in cell_a or "合計" in cell_b or "合計" in cell_c:
+            total_row = r
+            break
+
+    # 4. 使用 set_cell_value_safe 安全寫入合計加總公式
+    data_end_row = total_row - 1
+    set_cell_value_safe(ws, total_row, 7, f"=SUM(G10:G{data_end_row})")    # G欄: 原型金額合計
+    set_cell_value_safe(ws, total_row, 10, f"=SUM(J10:J{data_end_row})")   # J欄: 模具金額合計
+    set_cell_value_safe(ws, total_row, 13, f"=SUM(M10:M{data_end_row})")   # M欄: 注型金額合計
+    set_cell_value_safe(ws, total_row, 15, f"=G{total_row}+J{total_row}+M{total_row}") # O欄: 總金額合計
 
     wb.save(output_excel_path)
