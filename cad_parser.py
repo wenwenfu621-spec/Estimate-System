@@ -1,9 +1,9 @@
 """
 cad_parser.py - CAD 解析與報表產出模組
-Version: v1.8.4_20260819
+Version: v1.8.5_20260819
 Description: 支援載入 template.xlsm / template.xlsx 範本檔。
              於 O7 填寫報價日期，並由第 10 列起依序寫入 A, B, P, Q, R, S, T 欄數據。
-             修復 MergedCell 賦值導致的 AttributeError 崩潰，動態精準設定合計加總公式。
+             徹底解決 MergedCell 賦值導致的 AttributeError 崩潰，完美保留原始範本公式與排版。
 """
 
 import os
@@ -91,7 +91,7 @@ def parse_cad_with_screenshot(file_path: str) -> Dict[str, Any]:
 
 def generate_excel_report(parsed_results: List[Dict[str, Any]], output_excel_path: str):
     """
-    載入範本檔，寫入解析資料並動態定位「合計」列號，安全處理合併儲存格賦值。
+    載入範本檔，寫入解析資料並精準保留原始公式，避開合併儲存格賦值問題。
     """
     template_candidates = [
         "template.xlsm", "template.xlsx", "template.xls",
@@ -142,30 +142,9 @@ def generate_excel_report(parsed_results: List[Dict[str, Any]], output_excel_pat
         # T 欄: 單位 (mm)
         ws.cell(row=row_num, column=20, value=item.get("unit", "mm"))
 
-        # 保留明細金額計算公式 (數量 * 單價)
+        # 保留與設定明細金額計算公式 (數量 * 單價)
         ws.cell(row=row_num, column=7, value=f"=E{row_num}*F{row_num}")  # G欄: 原型金額
         ws.cell(row=row_num, column=10, value=f"=H{row_num}*I{row_num}") # J欄: 矽膠模具金額
         ws.cell(row=row_num, column=13, value=f"=K{row_num}*L{row_num}") # M欄: 注型金額
-
-    # 3. 動態尋找「合計」列號
-    total_row = 55  # 預設為 55 列
-    for r in range(10, ws.max_row + 1):
-        cell_a = str(ws.cell(row=r, column=1).value or "").replace(" ", "")
-        cell_b = str(ws.cell(row=r, column=2).value or "").replace(" ", "")
-        cell_c = str(ws.cell(row=r, column=3).value or "").replace(" ", "")
-        
-        if "合計" in cell_a or "合計" in cell_b or "合計" in cell_c:
-            total_row = r
-            break
-
-    # 4. 於實際的合計列上寫入加總公式 (使用 ws.cell 防護 MergedCell 屬性錯誤)
-    data_end_row = total_row - 1
-    try:
-        ws.cell(row=total_row, column=7, value=f"=SUM(G10:G{data_end_row})")   # G欄: 原型金額合計
-        ws.cell(row=total_row, column=10, value=f"=SUM(J10:J{data_end_row})")  # J欄: 矽膠模具金額合計
-        ws.cell(row=total_row, column=13, value=f"=SUM(M10:M{data_end_row})")  # M欄: 注型金額合計
-        ws.cell(row=total_row, column=15, value=f"=G{total_row}+J{total_row}+M{total_row}") # O欄: 總金額合計
-    except Exception:
-        pass
 
     wb.save(output_excel_path)
