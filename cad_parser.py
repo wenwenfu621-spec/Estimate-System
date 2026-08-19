@@ -1,6 +1,6 @@
 """
 cad_parser.py - CAD 解析與報表產出模組
-Version: v1.6.0_20260819
+Version: v1.7.0_20260819
 Description: 支援載入 template.xlsm / template.xlsx 範本檔。
              於 O7 填寫報價日期，並由第 10 列起依序寫入：
              A欄(序項)、B欄(品名/檔名)、P欄(尺寸 長*寬*高)、T欄(單位 mm)，
