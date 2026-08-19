@@ -1,9 +1,9 @@
 """
 cad_parser.py - CAD 解析與報表產出模組
-Version: v1.5.3_20260818
+Version: v1.6.0_20260819
 Description: 支援載入 template.xlsm / template.xlsx 範本檔。
              於 O7 填寫報價日期，並由第 10 列起依序寫入：
-             A欄(序項)、B欄(品名/檔名)、P欄(尺寸 長*寬*高)、Q欄(單位 mm)，
+             A欄(序項)、B欄(品名/檔名)、P欄(尺寸 長*寬*高)、T欄(單位 mm)，
              輸出為相容格式以保護原始公式與排版。
 """
 
@@ -125,7 +125,7 @@ def generate_excel_report(parsed_results: List[Dict[str, Any]], output_excel_pat
         # P 欄: 尺寸 (長*寬*高)
         ws.cell(row=row_num, column=16, value=item.get("dimensions_str", ""))
         
-        # Q 欄: 單位 (mm) [由原本 T欄 改為 Q欄/Column 17]
-        ws.cell(row=row_num, column=17, value=item.get("unit", "mm"))
+        # T 欄: 單位 (mm) [自 T10/Column 20 起依序填寫]
+        ws.cell(row=row_num, column=20, value=item.get("unit", "mm"))
 
     wb.save(output_excel_path)
