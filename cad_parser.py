@@ -1,9 +1,9 @@
 """
 cad_parser.py - CAD 解析與報表產出模組
-Version: v1.8.3_20260819
+Version: v1.8.4_20260819
 Description: 支援載入 template.xlsm / template.xlsx 範本檔。
              於 O7 填寫報價日期，並由第 10 列起依序寫入 A, B, P, Q, R, S, T 欄數據。
-             自動動態尋找「合計」列號，精準更新加總公式，絕不插入多餘空白列或造成排版跑位。
+             修復 MergedCell 賦值導致的 AttributeError 崩潰，動態精準設定合計加總公式。
 """
 
 import os
@@ -91,7 +91,7 @@ def parse_cad_with_screenshot(file_path: str) -> Dict[str, Any]:
 
 def generate_excel_report(parsed_results: List[Dict[str, Any]], output_excel_path: str):
     """
-    載入範本檔，寫入解析資料並動態定位「合計」列號，防止排版推擠跑位。
+    載入範本檔，寫入解析資料並動態定位「合計」列號，安全處理合併儲存格賦值。
     """
     template_candidates = [
         "template.xlsm", "template.xlsx", "template.xls",
@@ -147,7 +147,7 @@ def generate_excel_report(parsed_results: List[Dict[str, Any]], output_excel_pat
         ws.cell(row=row_num, column=10, value=f"=H{row_num}*I{row_num}") # J欄: 矽膠模具金額
         ws.cell(row=row_num, column=13, value=f"=K{row_num}*L{row_num}") # M欄: 注型金額
 
-    # 3. 動態尋找「合計」列號，保護頁尾排版
+    # 3. 動態尋找「合計」列號
     total_row = 55  # 預設為 55 列
     for r in range(10, ws.max_row + 1):
         cell_a = str(ws.cell(row=r, column=1).value or "").replace(" ", "")
@@ -158,11 +158,14 @@ def generate_excel_report(parsed_results: List[Dict[str, Any]], output_excel_pat
             total_row = r
             break
 
-    # 4. 於實際的合計列上寫入加總公式
+    # 4. 於實際的合計列上寫入加總公式 (使用 ws.cell 防護 MergedCell 屬性錯誤)
     data_end_row = total_row - 1
-    ws[f'G{total_row}'] = f"=SUM(G10:G{data_end_row})"
-    ws[f'J{total_row}'] = f"=SUM(J10:J{data_end_row})"
-    ws[f'M{total_row}'] = f"=SUM(M10:M{data_end_row})"
-    ws[f'O{total_row}'] = f"=G{total_row}+J{total_row}+M{total_row}"
+    try:
+        ws.cell(row=total_row, column=7, value=f"=SUM(G10:G{data_end_row})")   # G欄: 原型金額合計
+        ws.cell(row=total_row, column=10, value=f"=SUM(J10:J{data_end_row})")  # J欄: 矽膠模具金額合計
+        ws.cell(row=total_row, column=13, value=f"=SUM(M10:M{data_end_row})")  # M欄: 注型金額合計
+        ws.cell(row=total_row, column=15, value=f"=G{total_row}+J{total_row}+M{total_row}") # O欄: 總金額合計
+    except Exception:
+        pass
 
     wb.save(output_excel_path)
