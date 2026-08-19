@@ -1,9 +1,9 @@
 """
 cad_parser.py - CAD 解析與報表產出模組
-Version: v1.8.6_20260819
+Version: v1.9.0_20260819
 Description: 支援載入 template.xlsm / template.xlsx 範本檔。
-             於 O7 填寫報價日期，由第 10 列起寫入 A, B, P, Q, R, S, T 數據。
-             使用 set_cell_value_safe 安全覆寫第 101 列合計公式，徹底解決 MergedCell 崩潰與 #REF! 錯誤。
+             採用方案 A：底層雙重相容引擎解析 .iges / .igs / .step / .stp 檔案。
+             精準寫入 A, B, P, Q, R, S, T 欄數據，使用 set_cell_value_safe 保護合計列公式。
 """
 
 import os
@@ -33,7 +33,7 @@ def set_cell_value_safe(ws, row: int, col: int, value: Any):
 
 def parse_cad_with_screenshot(file_path: str) -> Dict[str, Any]:
     """
-    讀取 CAD 檔案，提取邊界尺寸，並以獨立 try-except 保護截圖生成。
+    讀取 CAD 檔案 (.step, .stp, .igs, .iges)，提取邊界尺寸，並以獨立 try-except 保護截圖生成。
     """
     if not os.path.exists(file_path):
         raise FileNotFoundError(f"找不到檔案：{file_path}")
@@ -43,12 +43,22 @@ def parse_cad_with_screenshot(file_path: str) -> Dict[str, Any]:
     if ext not in valid_extensions:
         raise ValueError(f"不支援的格式 '{ext}'")
 
-    # 1. 核心幾何長寬高解析
+    # 1. 核心幾何長寬高解析 (方案 A: 完整支援 STEP 與 IGES/IGS)
     try:
         if ext in ('.step', '.stp'):
             model = cq.importers.importStep(file_path)
-        else:
-            model = cq.importers.importShape(cq.importers.ImportTypes.IGES, file_path)
+        elif ext in ('.igs', '.iges'):
+            try:
+                # 優先嘗試 CadQuery 標準形狀匯入
+                model = cq.importers.importShape(file_path)
+            except Exception:
+                # 降級方案：調用底層 OpenCASCADE (OCP) 控制引擎讀取 IGES
+                from OCP.IGESControl import IGESControl_Reader
+                reader = IGESControl_Reader()
+                reader.ReadFile(file_path)
+                reader.TransferRoots()
+                occ_shape = reader.Shape()
+                model = cq.Workplane("XY").newObject([cq.Shape.cast(occ_shape)])
 
         bbox = model.val().BoundingBox()
         x_len = round(bbox.xlen, 2)
