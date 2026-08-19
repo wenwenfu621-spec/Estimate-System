@@ -1,10 +1,10 @@
 """
 cad_parser.py - CAD 解析與報表產出模組
-Version: v1.8.0_20260819
+Version: v1.8.2_20260819
 Description: 支援載入 template.xlsm / template.xlsx 範本檔。
-             精準於 O7 填寫報價日期，並由第 10 列起依序寫入：
-             A欄(序項)、B欄(品名/檔名)、P欄(尺寸 長*寬*高)、T欄(單位 mm)。
-             100% 完整保留範本內 G/J/M 欄位的所有計算公式與排版。
+             於 O7 填寫報價日期，並由第 10 列起依序寫入：
+             A欄(序項)、B欄(品名/檔名)、P欄(尺寸整合)、Q欄(長)、R欄(寬)、S欄(高)、T欄(單位)。
+             完整修復與保護 G/J/M 欄明細公式與第 55 列加總公式 (#REF! 防護)。
 """
 
 import os
@@ -41,8 +41,12 @@ def parse_cad_with_screenshot(file_path: str) -> Dict[str, Any]:
         z_len = round(bbox.zlen, 2)
         dims_sorted: List[float] = sorted([x_len, y_len, z_len], reverse=True)
         
+        length_val = dims_sorted[0]
+        width_val = dims_sorted[1]
+        height_val = dims_sorted[2]
+        
         # 尺寸字串格式化為：長*寬*高
-        dimensions_str = f"{dims_sorted[0]:.2f}*{dims_sorted[1]:.2f}*{dims_sorted[2]:.2f}"
+        dimensions_str = f"{length_val:.2f}*{width_val:.2f}*{height_val:.2f}"
     except Exception as e:
         return {
             "status": "error",
@@ -78,6 +82,9 @@ def parse_cad_with_screenshot(file_path: str) -> Dict[str, Any]:
         "status": "success",
         "file_name": os.path.basename(file_path),
         "dimensions_str": dimensions_str,
+        "length": length_val,
+        "width": width_val,
+        "height": height_val,
         "unit": "mm",
         "image_path": img_path
     }
@@ -85,7 +92,7 @@ def parse_cad_with_screenshot(file_path: str) -> Dict[str, Any]:
 
 def generate_excel_report(parsed_results: List[Dict[str, Any]], output_excel_path: str):
     """
-    載入 template.xlsm / template.xlsx 範本檔，僅寫入必要欄位，精準保留原始公式。
+    載入 template.xlsm / template.xlsx 範本檔，寫入解析結果並保護所有計算公式。
     """
     template_candidates = [
         "template.xlsm", "template.xlsx", "template.xls",
@@ -100,7 +107,6 @@ def generate_excel_report(parsed_results: List[Dict[str, Any]], output_excel_pat
     is_xlsm = template_file and template_file.lower().endswith('.xlsm')
 
     if template_file:
-        # data_only=False 確保開啟並儲存時 100% 保留 G/J/M 欄的計算公式
         wb = openpyxl.load_workbook(template_file, data_only=False, keep_vba=is_xlsm)
         ws = wb.active
     else:
@@ -112,7 +118,7 @@ def generate_excel_report(parsed_results: List[Dict[str, Any]], output_excel_pat
     today_str = datetime.now().strftime("%Y/%m/%d")
     ws['O7'] = today_str
 
-    # 2. 從第 10 列起逐筆填入資料 (完全避開 G/J/M 等公式欄位)
+    # 2. 從第 10 列起逐筆填入資料與拆解尺寸
     start_row = 10
     for idx, item in enumerate(parsed_results):
         row_num = start_row + idx
@@ -123,10 +129,33 @@ def generate_excel_report(parsed_results: List[Dict[str, Any]], output_excel_pat
         # B 欄: 品名 (上傳的 CAD 檔名)
         ws.cell(row=row_num, column=2, value=item.get("file_name", ""))
         
-        # P 欄: 尺寸 (長*寬*高)
+        # P 欄: 尺寸整合字串 (長*寬*高)
         ws.cell(row=row_num, column=16, value=item.get("dimensions_str", ""))
         
-        # T 欄: 單位 (mm) [自 T10/Column 20 起依序填寫]
+        # Q 欄: 長 (Length)
+        if "length" in item:
+            ws.cell(row=row_num, column=17, value=item["length"])
+            
+        # R 欄: 寬 (Width)
+        if "width" in item:
+            ws.cell(row=row_num, column=18, value=item["width"])
+            
+        # S 欄: 高 (Height)
+        if "height" in item:
+            ws.cell(row=row_num, column=19, value=item["height"])
+            
+        # T 欄: 單位 (mm)
         ws.cell(row=row_num, column=20, value=item.get("unit", "mm"))
+
+        # 明細列自動金額計算公式防護 (數量 * 單價)
+        ws.cell(row=row_num, column=7, value=f"=E{row_num}*F{row_num}")  # G欄: 原型金額
+        ws.cell(row=row_num, column=10, value=f"=H{row_num}*I{row_num}") # J欄: 矽膠模具金額
+        ws.cell(row=row_num, column=13, value=f"=K{row_num}*L{row_num}") # M欄: 注型金額
+
+    # 3. 第 55 列加總公式防護 (徹底修復與防止 #REF! 錯誤)
+    ws['G55'] = "=SUM(G10:G54)"
+    ws['J55'] = "=SUM(J10:J54)"
+    ws['M55'] = "=SUM(M10:M54)"
+    ws['O55'] = "=G55+J55+M55"
 
     wb.save(output_excel_path)
