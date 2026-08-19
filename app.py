@@ -1,9 +1,9 @@
 """
 app.py - Streamlit 網頁介面程式
-Version: v1.8.6_20260819
+Version: v1.9.0_20260819
 Description: 提供多檔 CAD 上傳與尺寸辨識，自動套寫至 Excel 範本。
-             安全載入 UI 元素（左下角版本號、頁尾頭像徽章），
-             徹底解決 101 列 #REF! 加總問題，支援一鍵重置與日期檔名。
+             已還原標題頭尾齒輪 Icon，相容方案 A 的 .iges 檔案解析，
+             支援 Widget Key 重置與日期檔名，頁尾含個人頭像徽章 (Design by Max)。
 """
 
 import streamlit as st
@@ -78,7 +78,7 @@ def inject_custom_elements():
     }}
     </style>
     
-    <div class="version-badge-left">Version: v1.8.6_20260819</div>
+    <div class="version-badge-left">Version: v1.9.0_20260819</div>
     
     <div class="custom-footer-max">
         {avatar_html}
@@ -111,12 +111,13 @@ def reset_session():
     st.session_state.uploader_key_num += 1
 
 
-st.set_page_config(page_title="CAD 報價辨識工具 (v1.8.6)", page_icon="⚙️", layout="centered")
+st.set_page_config(page_title="CAD 報價辨識工具 (v1.9.0)", page_icon="⚙️", layout="centered")
 
 # 優先載入左下角版本號與頁尾頭像徽章
 inject_custom_elements()
 
-st.title("CAD 自動報價與尺寸辨識工具")
+# 標題還原頭尾 ⚙️ 齒輪 Icon
+st.title("⚙️ CAD 自動報價與尺寸辨識工具 ⚙️")
 st.write("上傳 `.step` 或 `.igs` 3D 模型檔，點選下方按鈕自動辨識尺寸並套寫至 Excel 報價單。")
 
 if "uploader_key_num" not in st.session_state:
