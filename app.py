@@ -1,9 +1,9 @@
 """
 app.py - Streamlit 網頁介面程式
-Version: v1.6.0_20260819
-Description: 提供多檔 CAD 上傳與尺寸辨識，套印至 template.xlsm 範本（單位寫入 T10 起）。
-             支援 Session State 下載保留預覽結果，左下角標示版本資訊，
-             頁尾包含個人識別頭像徽章 (Design by Max)。
+Version: v1.7.0_20260819
+Description: 提供多檔 CAD 上傳與尺寸辨識，自動套寫至 Excel 範本。
+             新增「一鍵重置」與「伺服器背景自動清理」雙重防護，
+             修復齒輪標題排版，左下角標示版本號，頁尾含個人頭像徽章 (Design by Max)。
 """
 
 import streamlit as st
@@ -77,7 +77,7 @@ def inject_custom_elements():
     }}
     </style>
     
-    <div class="version-badge-left">Version: v1.6.0_20260819</div>
+    <div class="version-badge-left">Version: v1.7.0_20260819</div>
     
     <div class="custom-footer-max">
         {avatar_html}
@@ -87,12 +87,34 @@ def inject_custom_elements():
     st.markdown(custom_css, unsafe_allow_html=True)
 
 
-st.set_page_config(page_title="CAD 報價辨識工具 (v1.6.0)", page_icon="⚙️", layout="centered")
+def cleanup_temp_files():
+    """清理伺服器上記錄的當次暫存檔案"""
+    if "temp_files_list" in st.session_state and st.session_state.temp_files_list:
+        for fpath in st.session_state.temp_files_list:
+            if fpath and os.path.exists(fpath):
+                try:
+                    os.remove(fpath)
+                except Exception:
+                    pass
+        st.session_state.temp_files_list = []
 
-st.title("⚙️ CAD 自動報價與尺寸辨識工具 ⚙️")
+
+def reset_session():
+    """點擊重置按鈕時觸發：清空實體暫存檔與 Session 狀態"""
+    cleanup_temp_files()
+    st.session_state.parsed_results = None
+    st.session_state.excel_bytes = None
+    st.session_state.export_ext = ".xlsx"
+    st.session_state.mime_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+
+st.set_page_config(page_title="CAD 報價辨識工具 (v1.7.0)", page_icon="⚙️", layout="centered")
+
+# 修復標題：純文字標題搭配單一 page_icon 齒輪
+st.title("CAD 自動報價與尺寸辨識工具")
 st.write("上傳 `.step` 或 `.igs` 3D 模型檔，點選下方按鈕自動辨識尺寸並套寫至 Excel 報價單。")
 
-# 初始化 Session State 狀態保存
+# 初始化 Session State
 if "parsed_results" not in st.session_state:
     st.session_state.parsed_results = None
 if "excel_bytes" not in st.session_state:
@@ -101,6 +123,8 @@ if "export_ext" not in st.session_state:
     st.session_state.export_ext = ".xlsx"
 if "mime_type" not in st.session_state:
     st.session_state.mime_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+if "temp_files_list" not in st.session_state:
+    st.session_state.temp_files_list = []
 
 uploaded_files = st.file_uploader(
     "上傳 CAD 圖檔 (可多選)", 
@@ -112,6 +136,9 @@ if uploaded_files:
     st.write(f"已選擇 **{len(uploaded_files)}** 個檔案。")
 
     if st.button("🎯 辨識 CAD 單據與幾何內容", type="primary"):
+        # 開始新辨識前先自動清空舊檔（伺服器自動防呆）
+        cleanup_temp_files()
+
         parsed_results = []
         progress_bar = st.progress(0)
         status_text = st.empty()
@@ -123,19 +150,20 @@ if uploaded_files:
             with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp_file:
                 tmp_file.write(uploaded_file.getvalue())
                 tmp_path = tmp_file.name
+                st.session_state.temp_files_list.append(tmp_path)
 
             result = parse_cad_with_screenshot(tmp_path)
             result["file_name"] = uploaded_file.name
             parsed_results.append(result)
 
-            if os.path.exists(tmp_path):
-                os.remove(tmp_path)
+            if result.get("image_path"):
+                st.session_state.temp_files_list.append(result["image_path"])
 
             progress_bar.progress((idx + 1) / len(uploaded_files))
 
         status_text.success("🎉 所有檔案辨識完成！已自動套用範本檔填入數據。")
 
-        # 生成 Excel 並存入 Session State
+        # 生成 Excel 並紀錄
         has_xlsm_template = os.path.exists("template.xlsm") or os.path.exists("Template.xlsm")
         export_ext = ".xlsm" if has_xlsm_template else ".xlsx"
         mime_type = "application/vnd.ms-excel.sheet.macroEnabled.12" if has_xlsm_template else "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
@@ -143,22 +171,20 @@ if uploaded_files:
         excel_tmp = tempfile.NamedTemporaryFile(delete=False, suffix=export_ext)
         excel_path = excel_tmp.name
         excel_tmp.close()
+        st.session_state.temp_files_list.append(excel_path)
 
         generate_excel_report(parsed_results, excel_path)
 
         with open(excel_path, "rb") as f:
             excel_bytes = f.read()
 
-        if os.path.exists(excel_path):
-            os.remove(excel_path)
-
-        # 保存至 session_state
+        # 寫入 Session State 供頁面持續展示與下載
         st.session_state.parsed_results = parsed_results
         st.session_state.excel_bytes = excel_bytes
         st.session_state.export_ext = export_ext
         st.session_state.mime_type = mime_type
 
-# 顯示辨識結果預覽與下載按鈕 (使用 Session State 保持不消失)
+# 顯示辨識預覽與控制按鈕
 if st.session_state.parsed_results:
     st.subheader("📋 辨識結果預覽")
     for res in st.session_state.parsed_results:
@@ -171,12 +197,20 @@ if st.session_state.parsed_results:
             st.error(f"❌ {res['file_name']} 解析失敗：{res.get('error_message')}")
 
     st.markdown("---")
-    st.download_button(
-        label=f"📊 下載完整 CAD 報價單 Excel 檔 ({st.session_state.export_ext})",
-        data=st.session_state.excel_bytes,
-        file_name=f"CAD_Quotation_Report{st.session_state.export_ext}",
-        mime=st.session_state.mime_type
-    )
+    col_dl, col_rst = st.columns([2, 1])
+    
+    with col_dl:
+        st.download_button(
+            label=f"📊 下載完整 CAD 報價單 Excel 檔 ({st.session_state.export_ext})",
+            data=st.session_state.excel_bytes,
+            file_name=f"CAD_Quotation_Report{st.session_state.export_ext}",
+            mime=st.session_state.mime_type,
+            use_container_width=True
+        )
+        
+    with col_rst:
+        if st.button("🔄 重置 / 準備下一批報價", on_click=reset_session, use_container_width=True):
+            st.rerun()
 
 # 載入左下角版本號與頁尾個人識別頭像徽章
 inject_custom_elements()
