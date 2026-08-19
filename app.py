@@ -1,10 +1,9 @@
 """
 app.py - Streamlit 網頁介面程式
-Version: v1.8.0_20260819
+Version: v1.8.2_20260819
 Description: 提供多檔 CAD 上傳與尺寸辨識，自動套寫至 Excel 範本。
-             使用 Widget Key 實現重置時 100% 清空上傳區塊，
-             下載檔名自動加入當天日期，完整保護 Excel 原始公式，
-             左下角標示版本號，頁尾含個人頭像徽章 (Design by Max)。
+             支援長/寬/高自動拆解填寫至 Q/R/S/T 欄位，
+             修復與保護 #REF! 加總公式，一鍵完全重置，下載檔名包含當天日期。
 """
 
 import streamlit as st
@@ -79,7 +78,7 @@ def inject_custom_elements():
     }}
     </style>
     
-    <div class="version-badge-left">Version: v1.8.0_20260819</div>
+    <div class="version-badge-left">Version: v1.8.2_20260819</div>
     
     <div class="custom-footer-max">
         {avatar_html}
@@ -109,16 +108,14 @@ def reset_session():
     st.session_state.export_ext = ".xlsx"
     st.session_state.mime_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     
-    # 變更 key 值以讓 file_uploader 元件完全還原成初始化乾淨狀態
     st.session_state.uploader_key_num += 1
 
 
-st.set_page_config(page_title="CAD 報價辨識工具 (v1.8.0)", page_icon="⚙️", layout="centered")
+st.set_page_config(page_title="CAD 報價辨識工具 (v1.8.2)", page_icon="⚙️", layout="centered")
 
 st.title("CAD 自動報價與尺寸辨識工具")
 st.write("上傳 `.step` 或 `.igs` 3D 模型檔，點選下方按鈕自動辨識尺寸並套寫至 Excel 報價單。")
 
-# 初始化 Session State 狀態與 Widget Key 數值
 if "uploader_key_num" not in st.session_state:
     st.session_state.uploader_key_num = 0
 if "parsed_results" not in st.session_state:
@@ -132,7 +129,6 @@ if "mime_type" not in st.session_state:
 if "temp_files_list" not in st.session_state:
     st.session_state.temp_files_list = []
 
-# 使用動態 key 確保可被徹底重置清空
 uploaded_files = st.file_uploader(
     "上傳 CAD 圖檔 (可多選)", 
     type=["step", "stp", "igs", "iges"],
@@ -170,7 +166,6 @@ if uploaded_files:
 
         status_text.success("🎉 所有檔案辨識完成！已自動套用範本檔填入數據。")
 
-        # 生成 Excel 報表
         has_xlsm_template = os.path.exists("template.xlsm") or os.path.exists("Template.xlsm")
         export_ext = ".xlsm" if has_xlsm_template else ".xlsx"
         mime_type = "application/vnd.ms-excel.sheet.macroEnabled.12" if has_xlsm_template else "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
@@ -185,13 +180,11 @@ if uploaded_files:
         with open(excel_path, "rb") as f:
             excel_bytes = f.read()
 
-        # 寫入 Session State 供下載與保持顯示
         st.session_state.parsed_results = parsed_results
         st.session_state.excel_bytes = excel_bytes
         st.session_state.export_ext = export_ext
         st.session_state.mime_type = mime_type
 
-# 顯示辨識預覽與下載/重置按鈕
 if st.session_state.parsed_results:
     st.subheader("📋 辨識結果預覽")
     for res in st.session_state.parsed_results:
@@ -199,6 +192,7 @@ if st.session_state.parsed_results:
             with st.expander(f"📄 {res['file_name']} - 【尺寸：{res['dimensions_str']} mm】"):
                 st.write(f"**品名 (檔名)**：{res['file_name']}")
                 st.write(f"**尺寸 (長*寬*高)**：{res['dimensions_str']}")
+                st.write(f"**拆解數值**：長 {res.get('length')} / 寬 {res.get('width')} / 高 {res.get('height')}")
                 st.write(f"**單位**：{res['unit']}")
         else:
             st.error(f"❌ {res['file_name']} 解析失敗：{res.get('error_message')}")
@@ -206,7 +200,6 @@ if st.session_state.parsed_results:
     st.markdown("---")
     col_dl, col_rst = st.columns([2, 1])
     
-    # 建立包含當天日期的預設下載檔名 (例: CAD_Quotation_Report_20260819.xlsx)
     today_date_str = datetime.now().strftime("%Y%m%d")
     download_filename = f"CAD_Quotation_Report_{today_date_str}{st.session_state.export_ext}"
     
@@ -223,5 +216,4 @@ if st.session_state.parsed_results:
         if st.button("🔄 重置 / 準備下一批報價", on_click=reset_session, use_container_width=True):
             st.rerun()
 
-# 載入左下角版本號與頁尾個人識別頭像徽章
 inject_custom_elements()
