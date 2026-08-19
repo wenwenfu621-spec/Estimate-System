@@ -1,15 +1,17 @@
 """
 app.py - Streamlit 網頁介面程式
-Version: v1.7.0_20260819
+Version: v1.8.0_20260819
 Description: 提供多檔 CAD 上傳與尺寸辨識，自動套寫至 Excel 範本。
-             新增「一鍵重置」與「伺服器背景自動清理」雙重防護，
-             修復齒輪標題排版，左下角標示版本號，頁尾含個人頭像徽章 (Design by Max)。
+             使用 Widget Key 實現重置時 100% 清空上傳區塊，
+             下載檔名自動加入當天日期，完整保護 Excel 原始公式，
+             左下角標示版本號，頁尾含個人頭像徽章 (Design by Max)。
 """
 
 import streamlit as st
 import os
 import tempfile
 import base64
+from datetime import datetime
 from cad_parser import parse_cad_with_screenshot, generate_excel_report
 
 
@@ -77,7 +79,7 @@ def inject_custom_elements():
     }}
     </style>
     
-    <div class="version-badge-left">Version: v1.7.0_20260819</div>
+    <div class="version-badge-left">Version: v1.8.0_20260819</div>
     
     <div class="custom-footer-max">
         {avatar_html}
@@ -100,21 +102,25 @@ def cleanup_temp_files():
 
 
 def reset_session():
-    """點擊重置按鈕時觸發：清空實體暫存檔與 Session 狀態"""
+    """點擊重置按鈕時觸發：清空暫存檔、Session 狀態，並變更 uploader_key 強制清空上傳元件"""
     cleanup_temp_files()
     st.session_state.parsed_results = None
     st.session_state.excel_bytes = None
     st.session_state.export_ext = ".xlsx"
     st.session_state.mime_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    
+    # 變更 key 值以讓 file_uploader 元件完全還原成初始化乾淨狀態
+    st.session_state.uploader_key_num += 1
 
 
-st.set_page_config(page_title="CAD 報價辨識工具 (v1.7.0)", page_icon="⚙️", layout="centered")
+st.set_page_config(page_title="CAD 報價辨識工具 (v1.8.0)", page_icon="⚙️", layout="centered")
 
-# 修復標題：純文字標題搭配單一 page_icon 齒輪
 st.title("CAD 自動報價與尺寸辨識工具")
 st.write("上傳 `.step` 或 `.igs` 3D 模型檔，點選下方按鈕自動辨識尺寸並套寫至 Excel 報價單。")
 
-# 初始化 Session State
+# 初始化 Session State 狀態與 Widget Key 數值
+if "uploader_key_num" not in st.session_state:
+    st.session_state.uploader_key_num = 0
 if "parsed_results" not in st.session_state:
     st.session_state.parsed_results = None
 if "excel_bytes" not in st.session_state:
@@ -126,17 +132,18 @@ if "mime_type" not in st.session_state:
 if "temp_files_list" not in st.session_state:
     st.session_state.temp_files_list = []
 
+# 使用動態 key 確保可被徹底重置清空
 uploaded_files = st.file_uploader(
     "上傳 CAD 圖檔 (可多選)", 
     type=["step", "stp", "igs", "iges"],
-    accept_multiple_files=True
+    accept_multiple_files=True,
+    key=f"file_uploader_{st.session_state.uploader_key_num}"
 )
 
 if uploaded_files:
     st.write(f"已選擇 **{len(uploaded_files)}** 個檔案。")
 
     if st.button("🎯 辨識 CAD 單據與幾何內容", type="primary"):
-        # 開始新辨識前先自動清空舊檔（伺服器自動防呆）
         cleanup_temp_files()
 
         parsed_results = []
@@ -163,7 +170,7 @@ if uploaded_files:
 
         status_text.success("🎉 所有檔案辨識完成！已自動套用範本檔填入數據。")
 
-        # 生成 Excel 並紀錄
+        # 生成 Excel 報表
         has_xlsm_template = os.path.exists("template.xlsm") or os.path.exists("Template.xlsm")
         export_ext = ".xlsm" if has_xlsm_template else ".xlsx"
         mime_type = "application/vnd.ms-excel.sheet.macroEnabled.12" if has_xlsm_template else "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
@@ -178,13 +185,13 @@ if uploaded_files:
         with open(excel_path, "rb") as f:
             excel_bytes = f.read()
 
-        # 寫入 Session State 供頁面持續展示與下載
+        # 寫入 Session State 供下載與保持顯示
         st.session_state.parsed_results = parsed_results
         st.session_state.excel_bytes = excel_bytes
         st.session_state.export_ext = export_ext
         st.session_state.mime_type = mime_type
 
-# 顯示辨識預覽與控制按鈕
+# 顯示辨識預覽與下載/重置按鈕
 if st.session_state.parsed_results:
     st.subheader("📋 辨識結果預覽")
     for res in st.session_state.parsed_results:
@@ -199,11 +206,15 @@ if st.session_state.parsed_results:
     st.markdown("---")
     col_dl, col_rst = st.columns([2, 1])
     
+    # 建立包含當天日期的預設下載檔名 (例: CAD_Quotation_Report_20260819.xlsx)
+    today_date_str = datetime.now().strftime("%Y%m%d")
+    download_filename = f"CAD_Quotation_Report_{today_date_str}{st.session_state.export_ext}"
+    
     with col_dl:
         st.download_button(
             label=f"📊 下載完整 CAD 報價單 Excel 檔 ({st.session_state.export_ext})",
             data=st.session_state.excel_bytes,
-            file_name=f"CAD_Quotation_Report{st.session_state.export_ext}",
+            file_name=download_filename,
             mime=st.session_state.mime_type,
             use_container_width=True
         )
