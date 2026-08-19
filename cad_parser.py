@@ -1,10 +1,10 @@
 """
 cad_parser.py - CAD 解析與報表產出模組
-Version: v1.7.0_20260819
+Version: v1.8.0_20260819
 Description: 支援載入 template.xlsm / template.xlsx 範本檔。
-             於 O7 填寫報價日期，並由第 10 列起依序寫入：
-             A欄(序項)、B欄(品名/檔名)、P欄(尺寸 長*寬*高)、T欄(單位 mm)，
-             輸出為相容格式以保護原始公式與排版。
+             精準於 O7 填寫報價日期，並由第 10 列起依序寫入：
+             A欄(序項)、B欄(品名/檔名)、P欄(尺寸 長*寬*高)、T欄(單位 mm)。
+             100% 完整保留範本內 G/J/M 欄位的所有計算公式與排版。
 """
 
 import os
@@ -85,7 +85,7 @@ def parse_cad_with_screenshot(file_path: str) -> Dict[str, Any]:
 
 def generate_excel_report(parsed_results: List[Dict[str, Any]], output_excel_path: str):
     """
-    載入 template.xlsm / template.xlsx 範本檔，寫入解析結果並保持原公式完整。
+    載入 template.xlsm / template.xlsx 範本檔，僅寫入必要欄位，精準保留原始公式。
     """
     template_candidates = [
         "template.xlsm", "template.xlsx", "template.xls",
@@ -100,7 +100,8 @@ def generate_excel_report(parsed_results: List[Dict[str, Any]], output_excel_pat
     is_xlsm = template_file and template_file.lower().endswith('.xlsm')
 
     if template_file:
-        wb = openpyxl.load_workbook(template_file, keep_vba=is_xlsm)
+        # data_only=False 確保開啟並儲存時 100% 保留 G/J/M 欄的計算公式
+        wb = openpyxl.load_workbook(template_file, data_only=False, keep_vba=is_xlsm)
         ws = wb.active
     else:
         wb = openpyxl.Workbook()
@@ -111,7 +112,7 @@ def generate_excel_report(parsed_results: List[Dict[str, Any]], output_excel_pat
     today_str = datetime.now().strftime("%Y/%m/%d")
     ws['O7'] = today_str
 
-    # 2. 從第 10 列起逐筆填入資料
+    # 2. 從第 10 列起逐筆填入資料 (完全避開 G/J/M 等公式欄位)
     start_row = 10
     for idx, item in enumerate(parsed_results):
         row_num = start_row + idx
