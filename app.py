@@ -1,8 +1,8 @@
 """
 app.py - Streamlit 網頁介面程式
-Version: v2.0.0_20260820
-Description: 提供 CAD 辨識工具與客戶表頭輸入框。
-             使用 HTML/CSS 鎖定標題齒輪不折行，支援無條件進位整數尺寸預覽，
+Version: v2.1.0_20260820
+Description: 提供 CAD 辨識工具與表頭輸入表單 (st.form)。
+             去除欄位名稱 (寫入 BX 欄位) 字樣，支援流暢輸入體驗與無條件進位整數尺寸預覽，
              一鍵重置 Widget Key，頁尾含個人頭像徽章 (Design by Max)。
 """
 
@@ -78,7 +78,7 @@ def inject_custom_elements():
     }}
     </style>
     
-    <div class="version-badge-left">Version: v2.0.0_20260820</div>
+    <div class="version-badge-left">Version: v2.1.0_20260820</div>
     
     <div class="custom-footer-max">
         {avatar_html}
@@ -111,7 +111,7 @@ def reset_session():
     st.session_state.uploader_key_num += 1
 
 
-st.set_page_config(page_title="CAD 報價辨識工具 (v2.0.0)", page_icon="⚙️", layout="centered")
+st.set_page_config(page_title="CAD 報價辨識工具 (v2.1.0)", page_icon="⚙️", layout="centered")
 
 # 載入懸浮元件
 inject_custom_elements()
@@ -133,15 +133,18 @@ if "mime_type" not in st.session_state:
 if "temp_files_list" not in st.session_state:
     st.session_state.temp_files_list = []
 
-# 新增 B4~B7 表頭資訊輸入區塊 (非必填，可留空或按 Enter)
+# 新增 B4~B7 表頭資訊輸入區塊 (採用 st.form 表單，避免輸入時觸發微小重新整理)
 with st.expander("📝 客戶與報價表頭資訊填寫 (選填，可直接留空)", expanded=True):
-    col_c1, col_c2 = st.columns(2)
-    with col_c1:
-        customer_input = st.text_input("客戶名稱 (寫入 B4 欄位)", key=f"cust_{st.session_state.uploader_key_num}")
-        phone_input = st.text_input("聯絡電話 (寫入 B6 欄位)", key=f"phone_{st.session_state.uploader_key_num}")
-    with col_c2:
-        contact_input = st.text_input("聯絡人 (寫入 B5 欄位)", key=f"contact_{st.session_state.uploader_key_num}")
-        fax_input = st.text_input("傳真 (寫入 B7 欄位)", key=f"fax_{st.session_state.uploader_key_num}")
+    with st.form(key=f"header_form_{st.session_state.uploader_key_num}"):
+        col_c1, col_c2 = st.columns(2)
+        with col_c1:
+            customer_input = st.text_input("客戶名稱", key=f"cust_{st.session_state.uploader_key_num}")
+            phone_input = st.text_input("聯絡電話", key=f"phone_{st.session_state.uploader_key_num}")
+        with col_c2:
+            contact_input = st.text_input("聯絡人", key=f"contact_{st.session_state.uploader_key_num}")
+            fax_input = st.text_input("傳真", key=f"fax_{st.session_state.uploader_key_num}")
+            
+        submit_header = st.form_submit_button("💾 儲存表頭資訊")
 
 uploaded_files = st.file_uploader(
     "上傳 CAD 圖檔 (可多選)", 
