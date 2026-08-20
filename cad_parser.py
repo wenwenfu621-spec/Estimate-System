@@ -1,6 +1,6 @@
 """
 cad_parser.py - CAD 解析與報表產出模組
-Version: v2.0.0_20260820
+Version: v2.1.0_20260820
 Description: 支援載入 template.xlsm / template.xlsx 範本檔。
              尺寸採 math.ceil 無條件進位至個位數整數。
              寫入 B4~B7 表頭資訊、B/P 欄自動調整欄寬，全數儲存格統一指定為「標楷體」。
@@ -207,7 +207,7 @@ def generate_excel_report(
         cell_p.font = kai_font_bold
         max_p_len = max(max_p_len, len(str(dims_str)))
         
-        # Q, R, S 欄: 長、寬、高拆解數值 (統一標楷體粗體，保持粗細一致)
+        # Q, R, S 欄: 長、寬、高拆解數值 (統一標楷體粗體)
         if "length" in item:
             cell_q = ws.cell(row=row_num, column=17, value=item["length"])
             cell_q.font = kai_font_bold
@@ -230,7 +230,7 @@ def generate_excel_report(
         c_j.font = kai_font_regular
         c_m.font = kai_font_regular
 
-    # 4. 動態欄寬自動保護（確保開啟 Excel 時內容不被邊框裁切）
+    # 4. 動態欄寬自動保護
     ws.column_dimensions['B'].width = max(ws.column_dimensions['B'].width or 0, max_b_len + 6)
     ws.column_dimensions['P'].width = max(ws.column_dimensions['P'].width or 0, max_p_len + 6)
 
@@ -245,7 +245,7 @@ def generate_excel_report(
             total_row = r
             break
 
-    # 6. 使用 set_cell_value_safe 安全寫入合計加總公式，並套用標楷體
+    # 6. 使用 set_cell_value_safe 安全寫入合計加總公式
     data_end_row = total_row - 1
     set_cell_value_safe(ws, total_row, 7, f"=SUM(G10:G{data_end_row})", font=kai_font_bold)
     set_cell_value_safe(ws, total_row, 10, f"=SUM(J10:J{data_end_row})", font=kai_font_bold)
