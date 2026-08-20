@@ -1,6 +1,6 @@
 """
 app.py - Streamlit 網頁介面程式
-Version: v2.1.2_20260820
+Version: v2.1.3_20260820
 Description: 提供 CAD 辨識工具與表頭輸入欄位。
              採用方案 1 原生輸入框，去除欄位名稱 (寫入 BX 欄位) 字樣，
              頂端新增 Tab 鍵切換提示，支援無條件進位整數尺寸預覽，
@@ -79,7 +79,7 @@ def inject_custom_elements():
     }}
     </style>
     
-    <div class="version-badge-left">Version: v2.1.2_20260820</div>
+    <div class="version-badge-left">Version: v2.1.3_20260820</div>
     
     <div class="custom-footer-max">
         {avatar_html}
@@ -112,7 +112,7 @@ def reset_session():
     st.session_state.uploader_key_num += 1
 
 
-st.set_page_config(page_title="CAD 報價辨識工具 (v2.1.2)", page_icon="⚙️", layout="centered")
+st.set_page_config(page_title="CAD 報價辨識工具 (v2.1.3)", page_icon="⚙️", layout="centered")
 
 # 載入懸浮元件
 inject_custom_elements()
