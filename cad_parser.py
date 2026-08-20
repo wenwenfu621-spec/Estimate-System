@@ -1,9 +1,10 @@
 """
 cad_parser.py - CAD 解析與報表產出模組
-Version: v2.1.2_20260820
+Version: v2.1.3_20260820
 Description: 支援載入 template.xlsm / template.xlsx 範本檔。
              尺寸採 math.ceil 無條件進位至個位數整數。
-             使用 set_cell_value_safe 安全寫入 B4~B7 表頭資訊 (解決 MergedCell AttributeError)，
+             新增 safe_str 徹底防禦 header_info AttributeError 錯誤，
+             使用 set_cell_value_safe 安全寫入 B4~B7 表頭資訊，
              B/P 欄自動調整欄寬，全數儲存格統一指定為「標楷體」。
 """
 
@@ -16,6 +17,18 @@ import cadquery as cq
 from PIL import Image
 import openpyxl
 from openpyxl.styles import Font
+
+
+def safe_str(val: Any) -> str:
+    """
+    安全轉為字串並去除首尾空白，防止 None 或特殊物件觸發 AttributeError
+    """
+    if val is None:
+        return ""
+    try:
+        return str(val).strip()
+    except Exception:
+        return ""
 
 
 def set_cell_value_safe(ws, row: int, col: int, value: Any, font: Optional[Font] = None):
@@ -127,7 +140,7 @@ def parse_cad_with_screenshot(file_path: str) -> Dict[str, Any]:
 def generate_excel_report(
     parsed_results: List[Dict[str, Any]], 
     output_excel_path: str,
-    header_info: Optional[Dict[str, str]] = None
+    header_info: Optional[Dict[str, Any]] = None
 ):
     """
     載入範本檔，寫入客戶表頭資訊與解析數據，全數指定字體為標楷體，並自動調整 B/P 欄寬。
@@ -156,12 +169,12 @@ def generate_excel_report(
     kai_font_regular = Font(name="標楷體", size=11, bold=False)
     kai_font_bold = Font(name="標楷體", size=11, bold=True)
 
-    # 1. 使用 set_cell_value_safe 安全寫入 B4~B7 表頭客戶資訊，避開 MergedCell 唯讀限制
-    if header_info:
-        customer_val = header_info.get("customer", "").strip()
-        contact_val = header_info.get("contact", "").strip()
-        phone_val = header_info.get("phone", "").strip()
-        fax_val = header_info.get("fax", "").strip()
+    # 1. 使用 safe_str + set_cell_value_safe 安全寫入 B4~B7 表頭客戶資訊
+    if header_info and isinstance(header_info, dict):
+        customer_val = safe_str(header_info.get("customer"))
+        contact_val = safe_str(header_info.get("contact"))
+        phone_val = safe_str(header_info.get("phone"))
+        fax_val = safe_str(header_info.get("fax"))
 
         if customer_val:
             set_cell_value_safe(ws, 4, 2, f"客戶名稱 : {customer_val}", font=kai_font_regular)
