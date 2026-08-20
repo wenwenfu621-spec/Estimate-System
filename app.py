@@ -1,9 +1,9 @@
 """
 app.py - Streamlit 網頁介面程式
-Version: v1.9.0_20260819
-Description: 提供多檔 CAD 上傳與尺寸辨識，自動套寫至 Excel 範本。
-             已還原標題頭尾齒輪 Icon，相容方案 A 的 .iges 檔案解析，
-             支援 Widget Key 重置與日期檔名，頁尾含個人頭像徽章 (Design by Max)。
+Version: v2.0.0_20260820
+Description: 提供 CAD 辨識工具與客戶表頭輸入框。
+             使用 HTML/CSS 鎖定標題齒輪不折行，支援無條件進位整數尺寸預覽，
+             一鍵重置 Widget Key，頁尾含個人頭像徽章 (Design by Max)。
 """
 
 import streamlit as st
@@ -78,7 +78,7 @@ def inject_custom_elements():
     }}
     </style>
     
-    <div class="version-badge-left">Version: v1.9.0_20260819</div>
+    <div class="version-badge-left">Version: v2.0.0_20260820</div>
     
     <div class="custom-footer-max">
         {avatar_html}
@@ -101,7 +101,7 @@ def cleanup_temp_files():
 
 
 def reset_session():
-    """點擊重置按鈕時觸發：清空暫存檔、Session 狀態，並變更 uploader_key 強制清空上傳元件"""
+    """點擊重置按鈕時觸發：清空暫存檔、Session 狀態，並變更 uploader_key 強制清空上傳元件與輸入框"""
     cleanup_temp_files()
     st.session_state.parsed_results = None
     st.session_state.excel_bytes = None
@@ -111,13 +111,13 @@ def reset_session():
     st.session_state.uploader_key_num += 1
 
 
-st.set_page_config(page_title="CAD 報價辨識工具 (v1.9.0)", page_icon="⚙️", layout="centered")
+st.set_page_config(page_title="CAD 報價辨識工具 (v2.0.0)", page_icon="⚙️", layout="centered")
 
-# 優先載入左下角版本號與頁尾頭像徽章
+# 載入懸浮元件
 inject_custom_elements()
 
-# 標題還原頭尾 ⚙️ 齒輪 Icon
-st.title("⚙️ CAD 自動報價與尺寸辨識工具 ⚙️")
+# 標題採用 HTML + white-space: nowrap 鎖定排版，徹底防止齒輪與文字折行堆疊
+st.markdown("<h1 style='text-align: center; white-space: nowrap;'>⚙️ CAD 自動報價與尺寸辨識工具 ⚙️</h1>", unsafe_allow_html=True)
 st.write("上傳 `.step` 或 `.igs` 3D 模型檔，點選下方按鈕自動辨識尺寸並套寫至 Excel 報價單。")
 
 if "uploader_key_num" not in st.session_state:
@@ -132,6 +132,16 @@ if "mime_type" not in st.session_state:
     st.session_state.mime_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 if "temp_files_list" not in st.session_state:
     st.session_state.temp_files_list = []
+
+# 新增 B4~B7 表頭資訊輸入區塊 (非必填，可留空或按 Enter)
+with st.expander("📝 客戶與報價表頭資訊填寫 (選填，可直接留空)", expanded=True):
+    col_c1, col_c2 = st.columns(2)
+    with col_c1:
+        customer_input = st.text_input("客戶名稱 (寫入 B4 欄位)", key=f"cust_{st.session_state.uploader_key_num}")
+        phone_input = st.text_input("聯絡電話 (寫入 B6 欄位)", key=f"phone_{st.session_state.uploader_key_num}")
+    with col_c2:
+        contact_input = st.text_input("聯絡人 (寫入 B5 欄位)", key=f"contact_{st.session_state.uploader_key_num}")
+        fax_input = st.text_input("傳真 (寫入 B7 欄位)", key=f"fax_{st.session_state.uploader_key_num}")
 
 uploaded_files = st.file_uploader(
     "上傳 CAD 圖檔 (可多選)", 
@@ -179,7 +189,15 @@ if uploaded_files:
         excel_tmp.close()
         st.session_state.temp_files_list.append(excel_path)
 
-        generate_excel_report(parsed_results, excel_path)
+        # 整理表頭填寫資訊帶入 generate_excel_report
+        header_info = {
+            "customer": customer_input,
+            "contact": contact_input,
+            "phone": phone_input,
+            "fax": fax_input
+        }
+
+        generate_excel_report(parsed_results, excel_path, header_info=header_info)
 
         with open(excel_path, "rb") as f:
             excel_bytes = f.read()
@@ -195,7 +213,7 @@ if st.session_state.parsed_results:
         if res.get("status") == "success":
             with st.expander(f"📄 {res['file_name']} - 【尺寸：{res['dimensions_str']} mm】"):
                 st.write(f"**品名 (檔名)**：{res['file_name']}")
-                st.write(f"**尺寸 (長*寬*高)**：{res['dimensions_str']}")
+                st.write(f"**尺寸 (長*寬*高，整數無條件進位)**：{res['dimensions_str']}")
                 st.write(f"**拆解數值**：長 {res.get('length')} / 寬 {res.get('width')} / 高 {res.get('height')}")
                 st.write(f"**單位**：{res['unit']}")
         else:
