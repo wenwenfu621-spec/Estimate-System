@@ -1,9 +1,10 @@
 """
 cad_parser.py - CAD 解析與報表產出模組
-Version: v2.1.0_20260820
+Version: v2.1.2_20260820
 Description: 支援載入 template.xlsm / template.xlsx 範本檔。
              尺寸採 math.ceil 無條件進位至個位數整數。
-             寫入 B4~B7 表頭資訊、B/P 欄自動調整欄寬，全數儲存格統一指定為「標楷體」。
+             使用 set_cell_value_safe 安全寫入 B4~B7 表頭資訊 (解決 MergedCell AttributeError)，
+             B/P 欄自動調整欄寬，全數儲存格統一指定為「標楷體」。
 """
 
 import os
@@ -155,7 +156,7 @@ def generate_excel_report(
     kai_font_regular = Font(name="標楷體", size=11, bold=False)
     kai_font_bold = Font(name="標楷體", size=11, bold=True)
 
-    # 1. 寫入 B4~B7 表頭客戶資訊
+    # 1. 使用 set_cell_value_safe 安全寫入 B4~B7 表頭客戶資訊，避開 MergedCell 唯讀限制
     if header_info:
         customer_val = header_info.get("customer", "").strip()
         contact_val = header_info.get("contact", "").strip()
@@ -163,25 +164,20 @@ def generate_excel_report(
         fax_val = header_info.get("fax", "").strip()
 
         if customer_val:
-            ws['B4'].value = f"客戶名稱 : {customer_val}"
-            ws['B4'].font = kai_font_regular
+            set_cell_value_safe(ws, 4, 2, f"客戶名稱 : {customer_val}", font=kai_font_regular)
             
         if contact_val:
-            ws['B5'].value = f"聯 絡 人 : {contact_val}"
-            ws['B5'].font = kai_font_regular
+            set_cell_value_safe(ws, 5, 2, f"聯 絡 人 : {contact_val}", font=kai_font_regular)
 
         if phone_val:
-            ws['B6'].value = f"聯絡電話 : {phone_val}"
-            ws['B6'].font = kai_font_regular
+            set_cell_value_safe(ws, 6, 2, f"聯絡電話 : {phone_val}", font=kai_font_regular)
 
         if fax_val:
-            ws['B7'].value = f"傳    真 : {fax_val}"
-            ws['B7'].font = kai_font_regular
+            set_cell_value_safe(ws, 7, 2, f"傳    真 : {fax_val}", font=kai_font_regular)
 
     # 2. 填入當天報價日期於 O7 欄位
     today_str = datetime.now().strftime("%Y/%m/%d")
-    ws['O7'].value = today_str
-    ws['O7'].font = kai_font_regular
+    set_cell_value_safe(ws, 7, 15, today_str, font=kai_font_regular)
 
     # 3. 寫入資料（由第 10 列起）並記錄最大文字長度以調整欄寬
     start_row = 10
