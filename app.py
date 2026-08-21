@@ -1,10 +1,9 @@
 """
 app.py - Streamlit 網頁介面程式
-Version: v2.6.1_20260821
-Description: 提供 CAD 報價辨識工具。
-             - 底部按鈕改為 st.columns(3) 等分，並統一使用 width="stretch"。
-             - 展示第三角法工程三視圖 + 等角圖卡預覽。
-             - 保持所有資料解析、OBB/AABB 邏輯與重置功能完整。
+Version: v2.7.0_20260821
+Description: 整合 3D (STEP/IGES) 與 2D (DXF) 雙軌路由管道，
+             支援 Mylar 材料設定與 Thickness 輸入介面，
+             底部按鈕維持等寬 (st.columns(3) + width="stretch")。
 """
 
 import streamlit as st
@@ -13,14 +12,12 @@ import tempfile
 import base64
 from datetime import datetime
 from cad_parser import parse_cad_with_screenshot, generate_excel_report, generate_word_report, is_valid_image
+from dxf_parser import parse_dxf_2d
 
 
 def inject_custom_elements():
     """注入左下角版本號標籤與中央個人識別頭像徽章"""
-    avatar_candidates = [
-        "avatar.jpg", "avatar.jpeg", "avatar.png", "avatar.JPG", "avatar.PNG",
-        "Avatar.jpg", "Avatar.jpeg", "Avatar.png", "Avatar.JPG", "Avatar.PNG"
-    ]
+    avatar_candidates = ["avatar.jpg", "avatar.jpeg", "avatar.png", "avatar.JPG", "avatar.PNG"]
     img_base64 = ""
     mime_type = "image/png"
 
@@ -28,79 +25,40 @@ def inject_custom_elements():
         if os.path.exists(af):
             with open(af, "rb") as img_f:
                 img_base64 = base64.b64encode(img_f.read()).decode("utf-8")
-                if af.lower().endswith((".jpg", ".jpeg")):
-                    mime_type = "image/jpeg"
-                else:
-                    mime_type = "image/png"
+                mime_type = "image/jpeg" if af.lower().endswith((".jpg", ".jpeg")) else "image/png"
             break
 
     avatar_html = f'<img src="data:{mime_type};base64,{img_base64}" style="width: 36px; height: 36px; border-radius: 50%; object-fit: cover; margin-right: 8px; border: 1.5px solid #ccc; background-color: #fff;">' if img_base64 else ""
 
     custom_css = f"""
     <style>
-    /* 左下角懸浮版本號 */
     .version-badge-left {{
-        position: fixed;
-        bottom: 16px;
-        left: 16px;
-        background-color: rgba(240, 242, 246, 0.9);
-        padding: 4px 12px;
-        border-radius: 12px;
-        font-family: monospace;
-        font-size: 0.8rem;
-        color: #555555;
-        border: 1px solid #d0d0d0;
-        z-index: 999999;
-        pointer-events: none;
+        position: fixed; bottom: 16px; left: 16px;
+        background-color: rgba(240, 242, 246, 0.9); padding: 4px 12px;
+        border-radius: 12px; font-family: monospace; font-size: 0.8rem;
+        color: #555555; border: 1px solid #d0d0d0; z-index: 999999; pointer-events: none;
     }}
-    
-    /* 底部正中央個人頭像徽章 */
     .custom-footer-max {{
-        position: fixed;
-        bottom: 16px;
-        left: 50%;
-        transform: translateX(-50%);
-        display: flex;
-        align-items: center;
-        background-color: rgba(255, 255, 255, 0.95);
-        padding: 4px 14px;
-        border-radius: 20px;
-        box-shadow: 0px 2px 8px rgba(0, 0, 0, 0.15);
-        z-index: 999999;
-        pointer-events: none;
+        position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%);
+        display: flex; align-items: center; background-color: rgba(255, 255, 255, 0.95);
+        padding: 4px 14px; border-radius: 20px; box-shadow: 0px 2px 8px rgba(0, 0, 0, 0.15);
+        z-index: 999999; pointer-events: none;
     }}
     .custom-footer-text {{
-        font-family: 'Comic Sans MS', cursive, sans-serif;
-        font-weight: bold;
-        font-style: italic;
-        font-size: 0.95rem;
-        color: #333333;
-        white-space: nowrap;
+        font-family: 'Comic Sans MS', cursive, sans-serif; font-weight: bold;
+        font-style: italic; font-size: 0.95rem; color: #333333; white-space: nowrap;
     }}
-    
-    /* 示意圖卡片容器樣式 */
     .diagram-card-box {{
-        background: #f8fafc;
-        border: 1px solid #e2e8f0;
-        border-radius: 10px;
-        padding: 12px;
-        text-align: center;
-        margin-bottom: 12px;
+        background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px; padding: 12px; text-align: center; margin-bottom: 12px;
     }}
     </style>
-    
-    <div class="version-badge-left">Version: v2.6.1_20260821</div>
-    
-    <div class="custom-footer-max">
-        {avatar_html}
-        <span class="custom-footer-text">Design by Max</span>
-    </div>
+    <div class="version-badge-left">Version: v2.7.0_20260821</div>
+    <div class="custom-footer-max">{avatar_html}<span class="custom-footer-text">Design by Max</span></div>
     """
     st.markdown(custom_css, unsafe_allow_html=True)
 
 
 def cleanup_temp_files():
-    """清理伺服器上記錄的當次暫存檔案"""
     if "temp_files_list" in st.session_state and st.session_state.temp_files_list:
         for fpath in st.session_state.temp_files_list:
             if fpath and os.path.exists(fpath):
@@ -112,7 +70,6 @@ def cleanup_temp_files():
 
 
 def reset_session():
-    """點擊重置按鈕時觸發：清空暫存檔、Session 狀態，並變更 uploader_key"""
     cleanup_temp_files()
     st.session_state.parsed_results = None
     st.session_state.excel_bytes = None
@@ -122,12 +79,11 @@ def reset_session():
     st.session_state.uploader_key_num += 1
 
 
-st.set_page_config(page_title="CAD 報價辨識工具 (v2.6.1)", page_icon="⚙️", layout="centered")
-
+st.set_page_config(page_title="CAD & Mylar 報價辨識工具 (v2.7.0)", page_icon="⚙️", layout="centered")
 inject_custom_elements()
 
-st.markdown("<h1 style='text-align: center; white-space: nowrap;'>⚙️ CAD 自動報價與尺寸辨識工具 ⚙️</h1>", unsafe_allow_html=True)
-st.write("上傳 `.step` 或 `.igs` 3D 模型檔，點選下方按鈕自動辨識尺寸並套寫至 Excel 與 Word 報價單。")
+st.markdown("<h1 style='text-align: center; white-space: nowrap;'>⚙️ CAD 與 2D 模切自動報價系統 ⚙️</h1>", unsafe_allow_html=True)
+st.write("支援 **3D 機構件 (STEP/IGES)** 與 **2D 模切材料 (DXF Mylar/PET)** 混合上傳辨識。")
 
 if "uploader_key_num" not in st.session_state:
     st.session_state.uploader_key_num = 0
@@ -144,8 +100,8 @@ if "mime_type" not in st.session_state:
 if "temp_files_list" not in st.session_state:
     st.session_state.temp_files_list = []
 
-with st.expander("📝 客戶與報價表頭資訊填寫 (選填，可直接留空)", expanded=True):
-    st.caption("💡 提示：輸入完畢後，按鍵盤 **`Tab`** 鍵可快速切換至下一個輸入欄位。")
+# 表頭與 Mylar 參數設定
+with st.expander("📝 客戶與報價表頭資訊填寫", expanded=True):
     col_c1, col_c2 = st.columns(2)
     with col_c1:
         customer_input = st.text_input("客戶名稱", key=f"cust_{st.session_state.uploader_key_num}")
@@ -154,56 +110,21 @@ with st.expander("📝 客戶與報價表頭資訊填寫 (選填，可直接留�
         contact_input = st.text_input("聯絡人", key=f"contact_{st.session_state.uploader_key_num}")
         fax_input = st.text_input("傳真", key=f"fax_{st.session_state.uploader_key_num}")
 
-with st.expander("📐 加工素材計算採用下列兩種方式之最小值", expanded=True):
-    svg_obb = """
-    <svg width="200" height="110" viewBox="0 0 200 110" xmlns="http://www.w3.org/2000/svg">
-        <rect width="200" height="110" rx="6" fill="#f8fafc"/>
-        <g transform="translate(100, 52) rotate(-20)">
-            <rect x="-60" y="-12" width="120" height="24" rx="3" fill="#3b82f6" fill-opacity="0.15" stroke="#2563eb" stroke-width="2" stroke-dasharray="4 2"/>
-            <rect x="-55" y="-8" width="110" height="16" rx="4" fill="#64748b" stroke="#334155" stroke-width="1.5"/>
-            <line x1="68" y1="-12" x2="68" y2="12" stroke="#2563eb" stroke-width="2"/>
-            <polyline points="65,-8 68,-12 71,-8" fill="none" stroke="#2563eb" stroke-width="2"/>
-            <polyline points="65,8 68,12 71,8" fill="none" stroke="#2563eb" stroke-width="2"/>
-        </g>
-        <text x="100" y="98" font-family="sans-serif" font-size="11" font-weight="bold" fill="#1e293b" text-anchor="middle">最小素材包容盒 (OBB)</text>
-    </svg>
-    """
-
-    svg_aabb = """
-    <svg width="200" height="110" viewBox="0 0 200 110" xmlns="http://www.w3.org/2000/svg">
-        <rect width="200" height="110" rx="6" fill="#f8fafc"/>
-        <rect x="35" y="18" width="130" height="64" rx="3" fill="#ef4444" fill-opacity="0.12" stroke="#dc2626" stroke-width="2" stroke-dasharray="4 2"/>
-        <g transform="translate(100, 50) rotate(-20)">
-            <rect x="-55" y="-8" width="110" height="16" rx="4" fill="#64748b" stroke="#334155" stroke-width="1.5"/>
-        </g>
-        <line x1="173" y1="18" x2="173" y2="82" stroke="#dc2626" stroke-width="2"/>
-        <polyline points="170,22 173,18 176,22" fill="none" stroke="#dc2626" stroke-width="2"/>
-        <polyline points="170,78 173,82 176,78" fill="none" stroke="#dc2626" stroke-width="2"/>
-        <text x="100" y="98" font-family="sans-serif" font-size="11" font-weight="bold" fill="#1e293b" text-anchor="middle">標準投影外框 (AABB)</text>
-    </svg>
-    """
-
-    col_img1, col_img2 = st.columns(2)
-    with col_img1:
-        st.markdown(f'<div class="diagram-card-box">{svg_obb}</div>', unsafe_allow_html=True)
-        st.markdown("""
-        **【OBB 最小素材包容盒】**
-        * 貼合零件幾何方向旋轉量測
-        * 素材精確省料 (如傾斜零件估得 4mm)
-        * **適用**：CNC 實體備料估價
-        """, unsafe_allow_html=True)
-    with col_img2:
-        st.markdown(f'<div class="diagram-card-box">{svg_aabb}</div>', unsafe_allow_html=True)
-        st.markdown("""
-        **【AABB 標準投影外框】**
-        * 沿世界座標軸 (X/Y/Z) 垂直外包
-        * 包含傾斜投影落差 (如傾斜零件估得 9mm)
-        * **適用**：外箱體積、正交零件估價
-        """, unsafe_allow_html=True)
+with st.expander("🧪 2D 模切材料預設參數 (針對 DXF)", expanded=True):
+    col_m1, col_m2 = st.columns(2)
+    with col_m1:
+        material_type = st.selectbox("材料類型 (2D Material)", ["Mylar", "PET", "PC Film", "Foam", "Sponge", "Rubber", "Gasket", "Tape", "Other"])
+    with col_m2:
+        thickness_option = st.selectbox("預設材料厚度 Thickness (mm)", [0.10, 0.125, 0.188, 0.20, 0.25, 0.30, 0.50, "自訂"])
+        if thickness_option == "自訂":
+            custom_thickness = st.number_input("輸入自訂厚度 (mm)", min_value=0.01, value=0.25, step=0.01)
+            selected_thickness = custom_thickness
+        else:
+            selected_thickness = float(thickness_option)
 
 uploaded_files = st.file_uploader(
-    "上傳 CAD 圖檔 (可多選)", 
-    type=["step", "stp", "igs", "iges"],
+    "上傳圖檔 (支援 STEP, STP, IGS, IGES, DXF；DWG 請先另存為 DXF)", 
+    type=["step", "stp", "igs", "iges", "dxf", "dwg"],
     accept_multiple_files=True,
     key=f"file_uploader_{st.session_state.uploader_key_num}"
 )
@@ -211,24 +132,40 @@ uploaded_files = st.file_uploader(
 if uploaded_files:
     st.write(f"已選擇 **{len(uploaded_files)}** 個檔案。")
 
-    if st.button("🎯 辨識 CAD 單據與幾何內容", type="primary"):
+    if st.button("🎯 開始雙軌智慧辨識", type="primary"):
         cleanup_temp_files()
-
         parsed_results = []
         progress_bar = st.progress(0)
         status_text = st.empty()
 
         for idx, uploaded_file in enumerate(uploaded_files):
-            status_text.text(f"正在辨識 ({idx+1}/{len(uploaded_files)}): {uploaded_file.name} ...")
-            
-            ext = os.path.splitext(uploaded_file.name)[1]
+            fname = uploaded_file.name
+            ext = os.path.splitext(fname)[1].lower()
+            status_text.text(f"正在辨識 ({idx+1}/{len(uploaded_files)}): {fname} ...")
+
+            # DWG 攔截處理
+            if ext == '.dwg':
+                parsed_results.append({
+                    "status": "error",
+                    "file_name": fname,
+                    "error_message": "DWG direct parsing is currently unsupported. 請將 DWG 另存為 DXF 後重新上傳。"
+                })
+                progress_bar.progress((idx + 1) / len(uploaded_files))
+                continue
+
             with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp_file:
                 tmp_file.write(uploaded_file.getvalue())
                 tmp_path = tmp_file.name
                 st.session_state.temp_files_list.append(tmp_path)
 
-            result = parse_cad_with_screenshot(tmp_path)
-            result["file_name"] = uploaded_file.name
+            # 路由分流：3D vs 2D
+            if ext in ('.dxf',):
+                result = parse_dxf_2d(tmp_path, user_thickness=selected_thickness)
+                result["material_type"] = material_type
+            else:
+                result = parse_cad_with_screenshot(tmp_path)
+
+            result["file_name"] = fname
             parsed_results.append(result)
 
             if result.get("image_path"):
@@ -236,14 +173,9 @@ if uploaded_files:
 
             progress_bar.progress((idx + 1) / len(uploaded_files))
 
-        status_text.success("🎉 所有檔案辨識完成！已自動套用範本檔填入數據。")
+        status_text.success("🎉 所有檔案辨識與路由處理完成！")
 
-        header_info = {
-            "customer": customer_input,
-            "contact": contact_input,
-            "phone": phone_input,
-            "fax": fax_input
-        }
+        header_info = {"customer": customer_input, "contact": contact_input, "phone": phone_input, "fax": fax_input}
 
         has_xlsm_template = os.path.exists("template.xlsm") or os.path.exists("Template.xlsm")
         export_ext = ".xlsm" if has_xlsm_template else ".xlsx"
@@ -255,7 +187,6 @@ if uploaded_files:
         st.session_state.temp_files_list.append(excel_path)
 
         generate_excel_report(parsed_results, excel_path, header_info=header_info)
-
         with open(excel_path, "rb") as f:
             excel_bytes = f.read()
 
@@ -267,7 +198,6 @@ if uploaded_files:
             st.session_state.temp_files_list.append(word_path)
 
             generate_word_report(parsed_results, word_path, header_info=header_info)
-
             with open(word_path, "rb") as f_w:
                 word_bytes = f_w.read()
         except Exception as e_word:
@@ -280,60 +210,46 @@ if uploaded_files:
         st.session_state.mime_type = mime_type
 
 if st.session_state.parsed_results:
-    st.subheader("📋 辨識結果預覽")
+    st.subheader("📋 雙軌辨識結果預覽")
     for res in st.session_state.parsed_results:
         if res.get("status") == "success":
+            ftype = res.get("file_type", "3D")
             display_dims_escaped = res['dimensions_str'].replace("*", "\\*")
-            used_mode = res.get("used_mode", "OBB")
             
-            with st.expander(f"📄 {res['file_name']} - 【尺寸：{display_dims_escaped} mm ({used_mode})】"):
+            with st.expander(f"📄 [{ftype}] {res['file_name']} - 【尺寸：{display_dims_escaped} mm】"):
                 col_p1, col_p2 = st.columns([2, 3])
                 with col_p1:
-                    st.write(f"**品名 (檔名)**：{res['file_name']}")
-                    st.write(f"**尺寸 (長\\*寬\\*高，無條件進位)**：{display_dims_escaped} mm ({used_mode})")
-                    st.write(f"**採納演算法**：{used_mode} 模式 (體積較小者)")
-                    st.write(f"**拆解數值**：長 {res.get('length')} / 寬 {res.get('width')} / 高 {res.get('height')}")
-                    st.write(f"**單位**：{res['unit']}")
+                    st.write(f"**檔名**：{res['file_name']}")
+                    st.write(f"**類型**：{'2D 模切材料 (' + res.get('material_type', 'Mylar') + ')' if ftype == '2D' else '3D 機械機構件'}")
+                    st.write(f"**尺寸**：{display_dims_escaped} mm")
+                    if ftype == '2D':
+                        st.write(f"**外形總面積**：{res.get('gross_area')} mm²")
+                        if res.get('unit_warning'):
+                            st.warning(res['unit_warning'])
+                    else:
+                        st.write(f"**演算法**：{res.get('used_mode', 'OBB')} 模式")
                 with col_p2:
                     if is_valid_image(res.get("image_path")):
-                        st.image(res["image_path"], caption="CAD 工程三視圖圖卡 (第三角法)", use_container_width=True)
+                        caption_text = "2D 材料輪廓預覽" if ftype == '2D' else "CAD 工程三視圖圖卡"
+                        st.image(res["image_path"], caption=caption_text, use_container_width=True)
                     else:
-                        st.warning("⚠️ 工程三視圖產生失敗")
+                        st.warning("⚠️ 預覽圖產生失敗")
                         if res.get("image_error"):
                             st.code(f"Diagnose Error: {res['image_error']}", language="text")
-
         else:
             st.error(f"❌ {res['file_name']} 解析失敗：{res.get('error_message')}")
 
     st.markdown("---")
     
-    # 底部按鈕改為 st.columns(3) 等分，並統一使用 width="stretch"
     col_dl1, col_dl2, col_rst = st.columns(3)
-    
     today_date_str = datetime.now().strftime("%Y%m%d")
-    download_excel_name = f"CAD_Quotation_Report_{today_date_str}{st.session_state.export_ext}"
-    download_word_name = f"CAD_Quotation_Report_{today_date_str}.docx"
     
     with col_dl1:
-        st.download_button(
-            label=f"📊 下載 Excel 報價單 ({st.session_state.export_ext})",
-            data=st.session_state.excel_bytes,
-            file_name=download_excel_name,
-            mime=st.session_state.mime_type,
-            width="stretch"
-        )
-
+        st.download_button(label="📊 下載 Excel 報價單", data=st.session_state.excel_bytes, file_name=f"Quotation_{today_date_str}{st.session_state.export_ext}", mime=st.session_state.mime_type, width="stretch")
     with col_dl2:
         if st.session_state.word_bytes:
-            st.download_button(
-                label="📝 下載 CAD 圖文報價單 (.docx)",
-                data=st.session_state.word_bytes,
-                file_name=download_word_name,
-                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                width="stretch"
-            )
+            st.download_button(label="📝 下載圖文報價報告 (.docx)", data=st.session_state.word_bytes, file_name=f"Quotation_{today_date_str}.docx", mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document", width="stretch")
         else:
             st.button("📝 Word 報表不可用", disabled=True, width="stretch")
-        
     with col_rst:
         st.button("🔄 重置 / 準備下一批", on_click=reset_session, width="stretch")
