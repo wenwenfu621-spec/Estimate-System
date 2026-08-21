@@ -3,6 +3,5 @@ cadquery
 openpyxl
 Pillow
 python-docx
-svglib
-reportlab
+cairosvg
 numpy
