@@ -1,6 +1,6 @@
 """
 pages/1_3D_CAD.py - 3D CAD 尺寸辨識專屬頁面
-Version: v2.8.1_20260821
+Version: v2.8.2_20260821
 Description: 專責 STEP/IGES 上傳、OBB/AABB 計算與 3D 工程三視圖預覽。
              使用獨立的 3D Session State、專屬 Reset 邏輯與返回首頁導航。
 """
