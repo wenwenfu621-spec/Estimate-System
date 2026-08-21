@@ -1,6 +1,6 @@
 """
 pages/2_2D_Mylar.py - 2D Mylar / DXF 材料辨識專屬頁面
-Version: v2.8.1_20260821
+Version: v2.8.2_20260821
 Description: 專責 DXF 上傳、Mylar 厚度與材質設定、2D 輪廓解析與預覽。
              使用獨立的 2D Session State、專屬 Reset 邏輯與返回首頁導航。
 """
@@ -106,7 +106,7 @@ if uploaded_2d_files:
             if res.get("image_path"):
                 st.session_state.temp_files_2d.append(res["image_path"])
 
-            progress_bar.progress((idx + 1) / len(uploaded_files))
+            progress_bar.progress((idx + 1) / len(uploaded_2d_files))
 
         status_text.success("🎉 2D DXF 檔案全部辨識完成！")
 
