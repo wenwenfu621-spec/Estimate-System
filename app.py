@@ -1,9 +1,8 @@
 """
 app.py - Streamlit 網頁介面程式
-Version: v2.5.6_20260821
+Version: v2.5.7_20260821
 Description: 提供 CAD 報價辨識工具。
-             修復末尾語法錯誤 (移除贅餘的三引號)。
-             相容 Streamlit 之 st.image 使用 use_container_width。
+             版本升級 v2.5.7：整合 Auto Crop 畫面優化與 Word 4.5 英吋視圖展現。
              自動同步計算 OBB/AABB 並取小值採納，
              展示「加工素材計算採用下列兩種方式之最小值」圖文說明區塊，
              視窗預覽標註尺寸來源模式 (OBB 或 AABB)，
@@ -96,7 +95,7 @@ def inject_custom_elements():
     }}
     </style>
     
-    <div class="version-badge-left">Version: v2.5.6_20260821</div>
+    <div class="version-badge-left">Version: v2.5.7_20260821</div>
     
     <div class="custom-footer-max">
         {avatar_html}
@@ -130,7 +129,7 @@ def reset_session():
     st.session_state.uploader_key_num += 1
 
 
-st.set_page_config(page_title="CAD 報價辨識工具 (v2.5.6)", page_icon="⚙️", layout="centered")
+st.set_page_config(page_title="CAD 報價辨識工具 (v2.5.7)", page_icon="⚙️", layout="centered")
 
 # 載入懸浮元件
 inject_custom_elements()
