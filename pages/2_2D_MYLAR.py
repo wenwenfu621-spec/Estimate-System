@@ -1,7 +1,7 @@
 """
 pages/2_2D_MYLAR.py - 2D Mylar / 模切材料快速報價頁面
-Version: v2.8.7_20260821
-Description: 支援 PDF / DXF 混合上傳，具備 file_id 隔離、嚴格的 Excel 匯出閘門與零假值防呆。
+Version: v2.8.8_20260821
+Description: 修正 UI 矛盾提示、啟用高精度小數 (0.01)、落實嚴格 Excel 匯出閘門與狀態同步。
 """
 
 import streamlit as st
@@ -69,7 +69,7 @@ with st.expander("🧪 2D 模切材料參數設定", expanded=True):
     with col_m2:
         thickness_option = st.selectbox("材料厚度 Thickness (mm)", [0.10, 0.125, 0.188, 0.20, 0.25, 0.30, 0.50, "自訂"])
         if thickness_option == "自訂":
-            selected_thickness = st.number_input("輸入自訂厚度 (mm)", min_value=0.01, value=0.25, step=0.01)
+            selected_thickness = st.number_input("輸入自訂厚度 (mm)", min_value=0.01, value=0.25, step=0.01, format="%.2f")
         else:
             selected_thickness = float(thickness_option)
 
@@ -131,7 +131,6 @@ if uploaded_2d_files:
                     res["dimensions_str"] = f"{l_val}*{w_val}"
                     res["confirmed"] = False
                 else:
-                    # 辨識失敗或無文字層時，歸零且不預填假尺寸
                     res["length"] = 0.0
                     res["width"] = 0.0
                     res["confirmed"] = False
@@ -172,9 +171,9 @@ if st.session_state.parsed_2d_results:
 
         col_u1, col_u2, col_u3 = st.columns(3)
         with col_u1:
-            user_l = st.number_input(f"Length (mm)", min_value=0.0, value=default_l, step=1.0, key=f"l_{file_id}")
+            user_l = st.number_input(f"Length (mm)", min_value=0.0, value=default_l, step=0.01, format="%.2f", key=f"l_{file_id}")
         with col_u2:
-            user_w = st.number_input(f"Width (mm)", min_value=0.0, value=default_w, step=1.0, key=f"w_{file_id}")
+            user_w = st.number_input(f"Width (mm)", min_value=0.0, value=default_w, step=0.01, format="%.2f", key=f"w_{file_id}")
         with col_u3:
             can_check = (user_l > 0 and user_w > 0)
             is_conf = st.checkbox(f"確認採用", value=res.get("confirmed", False) and can_check, disabled=not can_check, key=f"conf_{file_id}")
@@ -183,7 +182,12 @@ if st.session_state.parsed_2d_results:
         final_w = min(user_l, user_w)
         gross_area = final_l * final_w
 
-        res["status"] = "success"
+        # 修正 status 條件：必須 Length > 0 且 Width > 0 才設為 success
+        if final_l > 0 and final_w > 0:
+            res["status"] = "success"
+        else:
+            res["status"] = "needs_manual_input"
+
         res["length"] = final_l
         res["width"] = final_w
         res["thickness"] = selected_thickness
@@ -193,12 +197,13 @@ if st.session_state.parsed_2d_results:
         res["net_area"] = gross_area
         res["confirmed"] = is_conf
 
+        # 修正矛盾提示：改為互斥的 if / elif
         is_ready = (final_l > 0 and final_w > 0 and is_conf)
         if not is_ready:
             reason = []
             if final_l <= 0 or final_w <= 0:
                 reason.append("尚未輸入有效 Length / Width")
-            if not is_conf:
+            elif not is_conf:
                 reason.append("尺寸有效，但尚未確認採用")
             incomplete_items.append((fname, ", ".join(reason)))
 
