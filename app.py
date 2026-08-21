@@ -1,12 +1,12 @@
 """
 app.py - Streamlit 網頁介面程式
-Version: v2.5.2_20260821
+Version: v2.5.3_20260821
 Description: 提供 CAD 報價辨識工具。
              自動同步計算 OBB/AABB 並取小值採納，
              展示「加工素材計算採用下列兩種方式之最小值」圖文說明區塊，
              視窗預覽標註尺寸來源模式 (OBB 或 AABB)，
              支援獨立生成與下載 Word 圖文報價單 (.docx) 含等角視圖縮圖，
-             與 Excel 匯出功能雙向獨立、零干擾。
+             含完整 image_error 錯誤診斷碼展現。
              Markdown 顯示轉義星號 (\\.replace("*", "\\*")) 解決 62209 顯示錯誤，
              採用方案 1 原生輸入框帶 Tab 切換提示，
              一鍵重置 Widget Key，頁尾含個人頭像徽章 (Design by Max)。
@@ -17,7 +17,7 @@ import os
 import tempfile
 import base64
 from datetime import datetime
-from cad_parser import parse_cad_with_screenshot, generate_excel_report, generate_word_report
+from cad_parser import parse_cad_with_screenshot, generate_excel_report, generate_word_report, is_valid_image
 
 
 def inject_custom_elements():
@@ -94,7 +94,7 @@ def inject_custom_elements():
     }}
     </style>
     
-    <div class="version-badge-left">Version: v2.5.2_20260821</div>
+    <div class="version-badge-left">Version: v2.5.3_20260821</div>
     
     <div class="custom-footer-max">
         {avatar_html}
@@ -128,7 +128,7 @@ def reset_session():
     st.session_state.uploader_key_num += 1
 
 
-st.set_page_config(page_title="CAD 報價辨識工具 (v2.5.2)", page_icon="⚙️", layout="centered")
+st.set_page_config(page_title="CAD 報價辨識工具 (v2.5.3)", page_icon="⚙️", layout="centered")
 
 # 載入懸浮元件
 inject_custom_elements()
@@ -310,8 +310,12 @@ if st.session_state.parsed_results:
                     st.write(f"**拆解數值**：長 {res.get('length')} / 寬 {res.get('width')} / 高 {res.get('height')}")
                     st.write(f"**單位**：{res['unit']}")
                 with col_p2:
-                    if res.get("image_path") and os.path.exists(res["image_path"]):
+                    if is_valid_image(res.get("image_path")):
                         st.image(res["image_path"], caption="CAD 等角視圖預覽", use_column_width=True)
+                    else:
+                        st.warning("⚠️ 等角視圖產生失敗")
+                        if res.get("image_error"):
+                            st.code(f"Diagnose Error: {res['image_error']}", language="text")
 
         else:
             st.error(f"❌ {res['file_name']} 解析失敗：{res.get('error_message')}")
