@@ -1,8 +1,8 @@
 """
 cad_parser.py - CAD 解析與報表產出模組
-Version: v2.2.0_20260821
+Version: v2.3.0_20260821
 Description: 支援載入 template.xlsm / template.xlsx 範本檔。
-             支援 OBB (最小素材包容盒) 與 AABB (標準投影外框) 雙模式計算，
+             採用 OpenCASCADE 原生 Bnd_OBB API 計算精確最小包容盒素材尺寸，
              尺寸採 math.ceil 無條件進位至個位數整數。
              使用 safe_str + set_cell_value_safe 安全寫入 B4~B7 表頭資訊，
              B/P 欄自動調整欄寬，全數儲存格統一指定為「標楷體」。
@@ -13,11 +13,18 @@ import math
 import tempfile
 from datetime import datetime
 from typing import Dict, Any, List, Optional
-import numpy as np
 import cadquery as cq
 from PIL import Image
 import openpyxl
 from openpyxl.styles import Font
+
+# 引入 OpenCASCADE 原生 Bnd_OBB 模組以進行精確幾何最小包容盒計算
+try:
+    from OCP.Bnd import Bnd_OBB
+    from OCP.BRepBndLib import BRepBndLib
+    HAS_OCP_OBB = True
+except ImportError:
+    HAS_OCP_OBB = False
 
 
 def safe_str(val: Any) -> str:
@@ -56,34 +63,25 @@ def set_cell_value_safe(ws, row: int, col: int, value: Any, font: Optional[Font]
 
 def calculate_obb_dimensions(model: cq.Workplane) -> List[float]:
     """
-    使用 PCA (主成分分析) 計算 CAD 模型之 OBB (Oriented Bounding Box 最小包容盒) 尺寸
+    使用 OpenCASCADE 原生 Bnd_OBB 精確計算 3D 實體的最小素材包容盒 (OBB)
     """
-    try:
-        # 1. 離散化表面點雲
-        shape = model.val()
-        tess = shape.tessellate(tolerance=0.1)
-        points = np.array(tess[0])
-        
-        if len(points) < 4:
-            bbox = shape.BoundingBox()
-            return [bbox.xlen, bbox.ylen, bbox.zlen]
+    if HAS_OCP_OBB:
+        try:
+            occ_shape = model.val().wrapped
+            obb = Bnd_OBB()
+            # 建立精確之 Optimal Bounding Box
+            BRepBndLib.AddOBB_s(occ_shape, obb, True, True, True)
+            
+            # XSize, YSize, ZSize 即為 OBB 之全尺寸 (長/寬/高)
+            dims = [obb.XSize(), obb.YSize(), obb.ZSize()]
+            if all(d > 0 for d in dims):
+                return dims
+        except Exception:
+            pass
 
-        # 2. PCA 計算主軸與旋轉矩陣
-        mean = np.mean(points, axis=0)
-        centered = points - mean
-        cov = np.cov(centered, rowvar=False)
-        eigenvalues, eigenvectors = np.linalg.eigh(cov)
-
-        # 3. 點雲投影至主軸座標系
-        projected = np.dot(centered, eigenvectors)
-        min_p = np.min(projected, axis=0)
-        max_p = np.max(projected, axis=0)
-        dims = max_p - min_p
-
-        return dims.tolist()
-    except Exception:
-        bbox = model.val().BoundingBox()
-        return [bbox.xlen, bbox.ylen, bbox.zlen]
+    # 若計算失敗或缺乏 OCP 模組，備援退回基本 BoundingBox
+    bbox = model.val().BoundingBox()
+    return [bbox.xlen, bbox.ylen, bbox.zlen]
 
 
 def parse_cad_with_screenshot(file_path: str, mode: str = "OBB") -> Dict[str, Any]:
