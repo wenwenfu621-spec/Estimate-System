@@ -1,8 +1,9 @@
 """
 pages/2_2D_Mylar.py - 2D Mylar / DXF 材料辨識專屬頁面
-Version: v2.8.2_20260821
+Version: v2.8.3_20260821
 Description: 專責 DXF 上傳、Mylar 厚度與材質設定、2D 輪廓解析與預覽。
              使用獨立的 2D Session State、專屬 Reset 邏輯與返回首頁導航。
+             動態適配 .xlsm/.xlsx 副檔名與對應 MIME 類型。
 """
 
 import streamlit as st
@@ -112,7 +113,10 @@ if uploaded_2d_files:
 
         header_info = {"customer": customer_input, "contact": contact_input, "phone": phone_input, "fax": fax_input}
 
-        excel_tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx")
+        has_xlsm = os.path.exists("template.xlsm") or os.path.exists("Template.xlsm")
+        export_ext = ".xlsm" if has_xlsm else ".xlsx"
+
+        excel_tmp = tempfile.NamedTemporaryFile(delete=False, suffix=export_ext)
         excel_path = excel_tmp.name
         excel_tmp.close()
         st.session_state.temp_files_2d.append(excel_path)
@@ -163,8 +167,19 @@ if st.session_state.parsed_2d_results:
     st.markdown("---")
     col1, col2, col3 = st.columns(3)
     today_str = datetime.now().strftime("%Y%m%d")
+
+    has_xlsm = os.path.exists("template.xlsm") or os.path.exists("Template.xlsm")
+    download_ext = ".xlsm" if has_xlsm else ".xlsx"
+    download_mime = "application/vnd.ms-excel.sheet.macroEnabled.12" if has_xlsm else "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
     with col1:
-        st.download_button("📊 下載 Excel 報價單", st.session_state.excel_2d_bytes, f"2D_Report_{today_str}.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", width="stretch")
+        st.download_button(
+            "📊 下載 Excel 報價單", 
+            st.session_state.excel_2d_bytes, 
+            f"2D_Report_{today_str}{download_ext}", 
+            mime=download_mime, 
+            width="stretch"
+        )
     with col2:
         if st.session_state.word_2d_bytes:
             st.download_button("📝 下載圖文報告 (.docx)", st.session_state.word_2d_bytes, f"2D_Report_{today_str}.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", width="stretch")
