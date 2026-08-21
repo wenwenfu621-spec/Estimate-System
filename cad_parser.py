@@ -1,12 +1,11 @@
 """
 cad_parser.py - CAD 解析與報表產出模組
-Version: v2.4.0_20260821
+Version: v2.5.0_20260821
 Description: 支援載入 template.xlsm / template.xlsx 範本檔。
              同時計算 OBB 與 AABB，自動採納素材體積較小者。
-             採用 OpenCASCADE 原生 Bnd_OBB API (XHSize*2) 計算精確最小包容盒。
-             尺寸採 math.ceil 無條件進位至個位數整數。
-             使用 safe_str + set_cell_value_safe 安全寫入 B4~B7 表頭資訊，
-             B/P 欄自動調整欄寬，全數儲存格統一指定為「標楷體」。
+             支援導出等角視圖 (1,1,1) 之 SVG/PNG 截圖。
+             全新新增 generate_word_report() 獨立匯出 Word 圖文報表 (.docx)，
+             100% 不干擾 Excel 原有導出邏輯與公式運算。
 """
 
 import os
@@ -18,6 +17,22 @@ import cadquery as cq
 from PIL import Image
 import openpyxl
 from openpyxl.styles import Font
+
+# 引入 docx 與 cairosvg 套件
+try:
+    import docx
+    from docx.shared import Inches, Pt, RGBColor
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    from docx.enum.table import WD_TABLE_ALIGNMENT
+    HAS_DOCX = True
+except ImportError:
+    HAS_DOCX = False
+
+try:
+    import cairosvg
+    HAS_CAIROSVG = True
+except ImportError:
+    HAS_CAIROSVG = False
 
 # 引入 OpenCASCADE 原生 Bnd_OBB 模組以進行精確幾何最小包容盒計算
 try:
@@ -88,6 +103,7 @@ def calculate_obb_dimensions(model: cq.Workplane) -> List[float]:
 def parse_cad_with_screenshot(file_path: str) -> Dict[str, Any]:
     """
     讀取 CAD 檔案，同時計算 OBB 與 AABB 尺寸，並自動採納素材體積較小者。
+    同時嘗試匯出等角視圖 (1, 1, 1) 的 PNG 截圖。
     """
     if not os.path.exists(file_path):
         raise FileNotFoundError(f"找不到檔案：{file_path}")
@@ -144,24 +160,33 @@ def parse_cad_with_screenshot(file_path: str) -> Dict[str, Any]:
             "error_message": f"CAD 幾何解析失敗: {str(e)}"
         }
 
-    # 2. 獨立截圖流程
+    # 2. 獨立等角視圖截圖流程 (1, 1, 1 視角)
     img_path = None
     try:
-        img_tmp = tempfile.NamedTemporaryFile(delete=False, suffix='.png')
-        img_path_candidate = img_tmp.name
-        img_tmp.close()
-
         svg_tmp = tempfile.NamedTemporaryFile(delete=False, suffix='.svg')
         svg_path = svg_tmp.name
         svg_tmp.close()
 
+        img_tmp = tempfile.NamedTemporaryFile(delete=False, suffix='.png')
+        img_path_candidate = img_tmp.name
+        img_tmp.close()
+
+        # 匯出等角視圖 SVG (projectionDir=(1,1,1))
         cq.exporters.export(model, svg_path, opt={"projectionDir": (1, 1, 1), "showHidden": False})
 
-        with Image.open(svg_path) as img:
-            img_resized = img.resize((400, 300))
-            img_resized.save(img_path_candidate, format="PNG")
-
-        img_path = img_path_candidate
+        if HAS_CAIROSVG:
+            # 優先使用 cairosvg 高畫質轉譯為 PNG
+            cairosvg.svg2png(url=svg_path, write_to=img_path_candidate, output_width=800, output_height=600)
+            img_path = img_path_candidate
+        else:
+            # 備援使用 Pillow 嘗試處置
+            try:
+                with Image.open(svg_path) as img:
+                    img_resized = img.resize((400, 300))
+                    img_resized.save(img_path_candidate, format="PNG")
+                img_path = img_path_candidate
+            except Exception:
+                img_path = None
 
         if os.path.exists(svg_path):
             os.remove(svg_path)
@@ -188,6 +213,7 @@ def generate_excel_report(
 ):
     """
     載入範本檔，寫入客戶表頭資訊與解析數據，全數指定字體為標楷體，並自動調整 B/P 欄寬。
+    （保持原有邏輯，絕不更改）
     """
     template_candidates = [
         "template.xlsm", "template.xlsx", "template.xls",
@@ -306,3 +332,120 @@ def generate_excel_report(
     set_cell_value_safe(ws, total_row, 15, f"=G{total_row}+J{total_row}+M{total_row}", font=kai_font_bold)
 
     wb.save(output_excel_path)
+
+
+def generate_word_report(
+    parsed_results: List[Dict[str, Any]], 
+    output_word_path: str,
+    header_info: Optional[Dict[str, Any]] = None
+):
+    """
+    全新獨立模組：建立 Word 圖文報價單 (.docx)，排版包含客戶表頭、CAD 尺寸數據與等角視圖 PNG 縮圖。
+    """
+    if not HAS_DOCX:
+        raise ModuleNotFoundError("系統缺少 python-docx 套件，無法產生 Word 報表。")
+
+    doc = docx.Document()
+
+    # 設定 Word 頁面邊界
+    for section in doc.sections:
+        section.top_margin = Inches(0.8)
+        section.bottom_margin = Inches(0.8)
+        section.left_margin = Inches(0.8)
+        section.right_margin = Inches(0.8)
+
+    # 1. 文件大標題
+    title_p = doc.add_paragraph()
+    title_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    title_run = title_p.add_run("⚙️ CAD 零件報價與尺寸明細單")
+    title_run.font.size = Pt(20)
+    title_run.font.bold = True
+    title_run.font.name = '標楷體'
+
+    # 日期子標題
+    today_str = datetime.now().strftime("%Y年%m月%d日")
+    sub_p = doc.add_paragraph()
+    sub_p.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+    sub_run = sub_p.add_run(f"報價日期：{today_str}")
+    sub_run.font.size = Pt(10)
+    sub_run.font.name = '標楷體'
+
+    doc.add_paragraph().paragraph_format.space_after = Pt(4)
+
+    # 2. 客戶與表頭資訊區塊
+    if header_info and isinstance(header_info, dict):
+        cust = safe_str(header_info.get("customer")) or "未填寫"
+        contact = safe_str(header_info.get("contact")) or "未填寫"
+        phone = safe_str(header_info.get("phone")) or "未填寫"
+        fax = safe_str(header_info.get("fax")) or "未填寫"
+
+        info_table = doc.add_table(rows=2, cols=2)
+        info_table.alignment = WD_TABLE_ALIGNMENT.CENTER
+        info_table.autofit = False
+
+        cells = info_table.rows[0].cells
+        cells[0].text = f"客戶名稱：{cust}"
+        cells[1].text = f"聯 絡 人：{contact}"
+
+        cells_2 = info_table.rows[1].cells
+        cells_2[0].text = f"聯絡電話：{phone}"
+        cells_2[1].text = f"傳    真：{fax}"
+
+        for row in info_table.rows:
+            for cell in row.cells:
+                for paragraph in cell.paragraphs:
+                    for run in paragraph.runs:
+                        run.font.name = '標楷體'
+                        run.font.size = Pt(11)
+
+    doc.add_paragraph().paragraph_format.space_after = Pt(10)
+
+    # 3. 逐筆 CAD 明細與等角視圖截圖排版
+    for idx, item in enumerate(parsed_results):
+        if item.get("status") != "success":
+            continue
+
+        file_name = item.get("file_name", "")
+        dims_str = item.get("dimensions_str", "")
+        used_mode = item.get("used_mode", "OBB")
+        length = item.get("length", 0)
+        width = item.get("width", 0)
+        height = item.get("height", 0)
+        unit = item.get("unit", "mm")
+        img_path = item.get("image_path")
+
+        # 項目分隔線與標題
+        p_item = doc.add_paragraph()
+        r_item = p_item.add_run(f"【項目 {idx+1}】 檔名：{file_name}")
+        r_item.font.bold = True
+        r_item.font.size = Pt(12)
+        r_item.font.name = '標楷體'
+
+        # 數據詳細資訊
+        p_desc = doc.add_paragraph()
+        p_desc.paragraph_format.left_indent = Inches(0.2)
+        
+        r_d1 = p_desc.add_run(f"• 採納素材尺寸 (長*寬*高)：{dims_str} {unit} ({used_mode} 模式)\n")
+        r_d1.font.bold = True
+        r_d1.font.name = '標楷體'
+        
+        r_d2 = p_desc.add_run(f"• 尺寸拆解數值：長 {length} {unit} / 寬 {width} {unit} / 高 {height} {unit}\n")
+        r_d2.font.name = '標楷體'
+
+        # 插入 CAD 等角視圖截圖 (安全防禦)
+        if img_path and os.path.exists(img_path):
+            try:
+                p_img = doc.add_paragraph()
+                p_img.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                run_img = p_img.add_run()
+                run_img.add_picture(img_path, width=Inches(3.8))
+            except Exception:
+                p_err = doc.add_paragraph("   [ CAD 等角視圖預覽載入失敗 ]")
+                p_err.runs[0].font.color.rgb = RGBColor(128, 128, 128)
+        else:
+            p_none = doc.add_paragraph("   [ 無法產生等角視圖預覽 ]")
+            p_none.runs[0].font.color.rgb = RGBColor(128, 128, 128)
+
+        doc.add_paragraph().paragraph_format.space_after = Pt(6)
+
+    doc.save(output_word_path)
