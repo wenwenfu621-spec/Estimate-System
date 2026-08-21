@@ -1,4 +1,3 @@
-# requirements.txt - Version: v2.5.2_20260821
 streamlit
 cadquery
 openpyxl
