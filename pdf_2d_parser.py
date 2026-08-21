@@ -1,8 +1,7 @@
 """
 pdf_2d_parser.py - 輕量化 PDF 2D 尺寸標註與上下文解析模組
-Version: v2.8.5_20260821
-Description: 使用 pypdf 提取文字與座標，透過正規表達式捕捉尺寸與公差 (如 69.7±0.3)，
-             自動過濾 Notes、Adhesive、厚度等干擾項，提供候選尺寸並支援 Fallback。
+Version: v2.8.6_20260821
+Description: 使用 pypdf 提取文字與座標，支援公差綁定、直徑/圓形件識別與 Notes 降權。
 """
 
 import os
@@ -17,12 +16,12 @@ except ImportError:
 
 
 def parse_pdf_dimensions(file_path: str) -> Dict[str, Any]:
-    """解析 PDF 取得最大外觀尺寸 (Length x Width)"""
+    """解析 PDF 取得最大外觀尺寸或外徑 (Length x Width / Circular)"""
     if not os.path.exists(file_path):
-        return {"status": "error", "error_message": "找不到 PDF 檔案"}
+        return {"status": "error", "error_message": "找不到 PDF 檔案", "status_code": "needs_manual_input"}
     
     if not HAS_PYPDF:
-        return {"status": "error", "error_message": "系統缺少 pypdf 套件，無法解析 PDF"}
+        return {"status": "error", "error_message": "系統缺少 pypdf 套件", "status_code": "needs_manual_input"}
 
     text_elements = []
     try:
@@ -30,7 +29,6 @@ def parse_pdf_dimensions(file_path: str) -> Dict[str, Any]:
         for page_idx, page in enumerate(reader.pages):
             def visitor_body(text, cm, tm, font_dict, font_size):
                 if text and text.strip():
-                    # tm[4], tm[5] 為 x, y 座標
                     x, y = tm[4], tm[5] if len(tm) > 5 else (0, 0)
                     text_elements.append({
                         "text": text.strip(),
@@ -43,22 +41,36 @@ def parse_pdf_dimensions(file_path: str) -> Dict[str, Any]:
         return {"status": "error", "error_message": f"PDF 讀取例外: {str(e)}", "status_code": "needs_manual_input"}
 
     if not text_elements:
-        return {"status": "error", "error_message": "PDF 內無可讀取文字（可能是掃描圖片型 PDF）", "status_code": "needs_manual_input"}
+        return {"status": "error", "error_message": "PDF 無文字層（掃描型 PDF）", "status_code": "needs_manual_input"}
 
-    # 排除關鍵字（Notes / 膠水 / 厚度 / R角 / 直徑等）
+    # 排除純 Notes / 材質 / 單位等關鍵字
     exclude_keywords = [
-        "THICKNESS", "ADHESIVE", "R", "RADIUS", "Ø", "DIA", 
-        "HOLE", "PITCH", "TYP", "REF", "SCALE", "DATE", "REV", 
-        "NOTE", "MATERIAL", "HARDNESS", "MM", "INCH"
+        "THICKNESS", "ADHESIVE", "R", "RADIUS", "HOLE", "PITCH", 
+        "TYP", "REF", "SCALE", "DATE", "REV", "NOTE", "MATERIAL", "HARDNESS", "MM", "INCH"
     ]
 
-    candidates = []
+    diameters = []
+    standard_dims = []
 
-    # 匹配模式：支援 69.7, 69.7±0.3, 69.7 ± 0.3, 69.7+0.3/-0.2 等
+    # 匹配直徑 (如 Ø17.1, DIA 17.1)
+    dia_pattern = re.compile(r'(?:[Ø⌀φΦ]|DIA\.?\s*)([0-9]+(?:\.[0-9]+)?)', re.IGNORECASE)
+    # 匹配一般尺寸與公差 (如 69.7, 69.7±0.3, 38.92)
     dim_pattern = re.compile(r'^([0-9]+(?:\.[0-9]+)?)\s*(?:[±±+-]\s*[0-9]+(?:\.[0-9]+)?(?:/[0-9]+(?:\.[0-9]+)?)?)?$')
 
     for el in text_elements:
         txt = el["text"].upper()
+        
+        # 檢查是否為直徑
+        dia_match = dia_pattern.search(txt)
+        if dia_match:
+            try:
+                val = float(dia_match.group(1))
+                if 1.0 <= val <= 2000.0:
+                    diameters.append(val)
+            except Exception:
+                pass
+            continue
+
         # 檢查是否含有排除關鍵字
         if any(kw in txt for kw in exclude_keywords):
             continue
@@ -67,39 +79,38 @@ def parse_pdf_dimensions(file_path: str) -> Dict[str, Any]:
         if match:
             try:
                 val = float(match.group(1))
-                # 合理的 Mylar 零件外觀尺寸範圍 (例如 1 mm 到 2000 mm)
-                if 1.0 <= val <= 3000.0:
-                    candidates.append({
-                        "nominal": val,
-                        "raw_text": el["text"],
-                        "x": el["x"],
-                        "y": el["y"],
-                        "page": el["page"]
-                    })
+                # 排除過小數值（如厚度 1mm 或 2.8mm 等局部特徵）
+                if 5.0 <= val <= 3000.0:
+                    standard_dims.append(val)
             except Exception:
                 pass
 
-    if len(candidates) < 2:
+    # 判定邏輯 1：若存在明顯的最大外徑（針對圓形件如 Ø17.1 與內孔 Ø6.x）
+    if diameters:
+        # 取最大的直徑作為外徑 (Outer Diameter)
+        max_dia = max(diameters)
+        # 若有其他較小的直徑（如孔徑），確保 max_dia 是顯著的外or 主尺寸
         return {
-            "status": "error", 
-            "error_message": "無法從 PDF 中可靠辨識出足夠的外觀尺寸標註", 
-            "status_code": "needs_manual_input"
+            "status": "success",
+            "file_type": "PDF",
+            "shape_type": "Circular",
+            "length": max_dia,
+            "width": max_dia,
+            "dimensions_str": f"{max_dia}*{max_dia}",
+            "dimension_source": "PDF Outer Diameter"
         }
 
-    # 簡單候選排序：依數值大小分組或取前兩個合理的整體尺寸候選（排除過小的數值如 2.8、0.15 等）
-    valid_vals = [c["nominal"] for c in candidates if c["nominal"] > 5.0]
-    
-    # 若有效數值大於等於 2 個，取最大的兩個作為 Length 與 Width
-    unique_sorted_vals = sorted(list(set(valid_vals)), reverse=True)
-
-    if len(unique_sorted_vals) >= 2:
-        l = unique_sorted_vals[0]
-        w = unique_sorted_vals[1]
+    # 判定邏輯 2：矩形或一般異形件，取前兩個最大的獨立尺寸作為 Length 與 Width (如 Test A: 38.92, 27.26; Test C: 69.7, 12.8)
+    unique_dims = sorted(list(set(standard_dims)), reverse=True)
+    if len(unique_dims) >= 2:
+        l = unique_dims[0]
+        w = unique_dims[1]
         length = max(l, w)
         width = min(l, w)
         return {
             "status": "success",
             "file_type": "PDF",
+            "shape_type": "Rectangular",
             "length": length,
             "width": width,
             "dimensions_str": f"{length}*{width}",
@@ -108,6 +119,6 @@ def parse_pdf_dimensions(file_path: str) -> Dict[str, Any]:
 
     return {
         "status": "error",
-        "error_message": "PDF 尺寸候選不足或無法判定整體外框",
+        "error_message": "無法從 PDF 中可靠辨識出整體外框尺寸",
         "status_code": "needs_manual_input"
     }
