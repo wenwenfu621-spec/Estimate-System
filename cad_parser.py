@@ -1,313 +1,300 @@
 """
-app.py - Streamlit 網頁介面程式
-Version: v2.3.0_20260821
-Description: 提供 CAD 報價辨識工具。
-             預設採用 OBB (最小素材包容盒) 計算素材尺寸，
-             內建去除 4mm/9mm 數值之雙模式箭頭 SVG 示意圖卡片與完美圖文對齊，
-             Markdown 顯示轉義星號 (\\.replace("*", "\\*")) 解決 62209 顯示錯誤，
-             採用方案 1 原生輸入框帶 Tab 切換提示，
-             一鍵重置 Widget Key，頁尾含個人頭像徽章 (Design by Max)。
+cad_parser.py - CAD 解析與報表產出模組
+Version: v2.3.1_20260821
+Description: 支援載入 template.xlsm / template.xlsx 範本檔。
+             修正自我循環引用 ImportError 錯誤。
+             採用 OpenCASCADE 原生 Bnd_OBB API 計算精確最小包容盒素材尺寸，
+             尺寸採 math.ceil 無條件進位至個位數整數。
+             使用 safe_str + set_cell_value_safe 安全寫入 B4~B7 表頭資訊，
+             B/P 欄自動調整欄寬，全數儲存格統一指定為「標楷體」。
 """
 
-import streamlit as st
 import os
+import math
 import tempfile
-import base64
 from datetime import datetime
-from cad_parser import parse_cad_with_screenshot, generate_excel_report
+from typing import Dict, Any, List, Optional
+import cadquery as cq
+from PIL import Image
+import openpyxl
+from openpyxl.styles import Font
+
+# 引入 OpenCASCADE 原生 Bnd_OBB 模組以進行精確幾何最小包容盒計算
+try:
+    from OCP.Bnd import Bnd_OBB
+    from OCP.BRepBndLib import BRepBndLib
+    HAS_OCP_OBB = True
+except ImportError:
+    HAS_OCP_OBB = False
 
 
-def inject_custom_elements():
-    """注入左下角版本號標籤與中央個人識別頭像徽章"""
-    avatar_candidates = [
-        "avatar.jpg", "avatar.jpeg", "avatar.png", "avatar.JPG", "avatar.PNG",
-        "Avatar.jpg", "Avatar.jpeg", "Avatar.png", "Avatar.JPG", "Avatar.PNG"
-    ]
-    img_base64 = ""
-    mime_type = "image/png"
-
-    for af in avatar_candidates:
-        if os.path.exists(af):
-            with open(af, "rb") as img_f:
-                img_base64 = base64.b64encode(img_f.read()).decode("utf-8")
-                if af.lower().endswith((".jpg", ".jpeg")):
-                    mime_type = "image/jpeg"
-                else:
-                    mime_type = "image/png"
-            break
-
-    avatar_html = f'<img src="data:{mime_type};base64,{img_base64}" style="width: 36px; height: 36px; border-radius: 50%; object-fit: cover; margin-right: 8px; border: 1.5px solid #ccc; background-color: #fff;">' if img_base64 else ""
-
-    custom_css = f"""
-    <style>
-    /* 左下角懸浮版本號 */
-    .version-badge-left {{
-        position: fixed;
-        bottom: 16px;
-        left: 16px;
-        background-color: rgba(240, 242, 246, 0.9);
-        padding: 4px 12px;
-        border-radius: 12px;
-        font-family: monospace;
-        font-size: 0.8rem;
-        color: #555555;
-        border: 1px solid #d0d0d0;
-        z-index: 999999;
-        pointer-events: none;
-    }}
-    
-    /* 底部正中央個人頭像徽章 */
-    .custom-footer-max {{
-        position: fixed;
-        bottom: 16px;
-        left: 50%;
-        transform: translateX(-50%);
-        display: flex;
-        align-items: center;
-        background-color: rgba(255, 255, 255, 0.95);
-        padding: 4px 14px;
-        border-radius: 20px;
-        box-shadow: 0px 2px 8px rgba(0, 0, 0, 0.15);
-        z-index: 999999;
-        pointer-events: none;
-    }}
-    .custom-footer-text {{
-        font-family: 'Comic Sans MS', cursive, sans-serif;
-        font-weight: bold;
-        font-style: italic;
-        font-size: 0.95rem;
-        color: #333333;
-        white-space: nowrap;
-    }}
-    
-    /* 示意圖卡片容器樣式 */
-    .diagram-card-box {{
-        background: #f8fafc;
-        border: 1px solid #e2e8f0;
-        border-radius: 10px;
-        padding: 12px;
-        text-align: center;
-        margin-bottom: 12px;
-    }}
-    </style>
-    
-    <div class="version-badge-left">Version: v2.3.0_20260821</div>
-    
-    <div class="custom-footer-max">
-        {avatar_html}
-        <span class="custom-footer-text">Design by Max</span>
-    </div>
+def safe_str(val: Any) -> str:
     """
-    st.markdown(custom_css, unsafe_allow_html=True)
-
-
-def cleanup_temp_files():
-    """清理伺服器上記錄的當次暫存檔案"""
-    if "temp_files_list" in st.session_state and st.session_state.temp_files_list:
-        for fpath in st.session_state.temp_files_list:
-            if fpath and os.path.exists(fpath):
-                try:
-                    os.remove(fpath)
-                except Exception:
-                    pass
-        st.session_state.temp_files_list = []
-
-
-def reset_session():
-    """點擊重置按鈕時觸發：清空暫存檔、Session 狀態，並變更 uploader_key 強制清空上傳元件與輸入框"""
-    cleanup_temp_files()
-    st.session_state.parsed_results = None
-    st.session_state.excel_bytes = None
-    st.session_state.export_ext = ".xlsx"
-    st.session_state.mime_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    
-    st.session_state.uploader_key_num += 1
-
-
-st.set_page_config(page_title="CAD 報價辨識工具 (v2.3.0)", page_icon="⚙️", layout="centered")
-
-# 載入懸浮元件
-inject_custom_elements()
-
-# 標題採用 HTML + white-space: nowrap 鎖定排版，徹底防止齒輪與文字折行堆疊
-st.markdown("<h1 style='text-align: center; white-space: nowrap;'>⚙️ CAD 自動報價與尺寸辨識工具 ⚙️</h1>", unsafe_allow_html=True)
-st.write("上傳 `.step` 或 `.igs` 3D 模型檔，點選下方按鈕自動辨識尺寸並套寫至 Excel 報價單。")
-
-if "uploader_key_num" not in st.session_state:
-    st.session_state.uploader_key_num = 0
-if "parsed_results" not in st.session_state:
-    st.session_state.parsed_results = None
-if "excel_bytes" not in st.session_state:
-    st.session_state.excel_bytes = None
-if "export_ext" not in st.session_state:
-    st.session_state.export_ext = ".xlsx"
-if "mime_type" not in st.session_state:
-    st.session_state.mime_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-if "temp_files_list" not in st.session_state:
-    st.session_state.temp_files_list = []
-
-# 新增 B4~B7 表頭資訊輸入區塊
-with st.expander("📝 客戶與報價表頭資訊填寫 (選填，可直接留空)", expanded=True):
-    st.caption("💡 提示：輸入完畢後，按鍵盤 **`Tab`** 鍵可快速切換至下一個輸入欄位。")
-    col_c1, col_c2 = st.columns(2)
-    with col_c1:
-        customer_input = st.text_input("客戶名稱", key=f"cust_{st.session_state.uploader_key_num}")
-        phone_input = st.text_input("聯絡電話", key=f"phone_{st.session_state.uploader_key_num}")
-    with col_c2:
-        contact_input = st.text_input("聯絡人", key=f"contact_{st.session_state.uploader_key_num}")
-        fax_input = st.text_input("傳真", key=f"fax_{st.session_state.uploader_key_num}")
-
-# 新增 OBB / AABB 素材計算模式設定區塊與去數值化 SVG 卡片示意圖
-with st.expander("📐 加工素材計算模式設定 (內定 OBB 模式)", expanded=True):
-    calc_mode_selected = st.radio(
-        "選擇素材尺寸計算演算法：",
-        options=["OBB", "AABB"],
-        format_func=lambda x: "☑ 最小素材尺寸模式 (OBB) - 【系統內定預設】" if x == "OBB" else "⚪ 標準投影外框模式 (AABB)",
-        key=f"mode_{st.session_state.uploader_key_num}"
-    )
-
-    # 去數值 (取消 4mm/9mm 文字) 僅保留箭頭之兩大 SVG 示意卡片
-    svg_obb = """
-    <svg width="200" height="110" viewBox="0 0 200 110" xmlns="http://www.w3.org/2000/svg">
-        <rect width="200" height="110" rx="6" fill="#f8fafc"/>
-        <g transform="translate(100, 52) rotate(-20)">
-            <rect x="-60" y="-12" width="120" height="24" rx="3" fill="#3b82f6" fill-opacity="0.15" stroke="#2563eb" stroke-width="2" stroke-dasharray="4 2"/>
-            <rect x="-55" y="-8" width="110" height="16" rx="4" fill="#64748b" stroke="#334155" stroke-width="1.5"/>
-            <!-- 僅保留雙向尺寸箭頭 -->
-            <line x1="68" y1="-12" x2="68" y2="12" stroke="#2563eb" stroke-width="2"/>
-            <polyline points="65,-8 68,-12 71,-8" fill="none" stroke="#2563eb" stroke-width="2"/>
-            <polyline points="65,8 68,12 71,8" fill="none" stroke="#2563eb" stroke-width="2"/>
-        </g>
-        <text x="100" y="98" font-family="sans-serif" font-size="11" font-weight="bold" fill="#1e293b" text-anchor="middle">最小素材包容盒 (OBB)</text>
-    </svg>
+    安全轉為字串並去除首尾空白，防止 None 或特殊物件觸發 AttributeError
     """
+    if val is None:
+        return ""
+    try:
+        return str(val).strip()
+    except Exception:
+        return ""
 
-    svg_aabb = """
-    <svg width="200" height="110" viewBox="0 0 200 110" xmlns="http://www.w3.org/2000/svg">
-        <rect width="200" height="110" rx="6" fill="#f8fafc"/>
-        <rect x="35" y="18" width="130" height="64" rx="3" fill="#ef4444" fill-opacity="0.12" stroke="#dc2626" stroke-width="2" stroke-dasharray="4 2"/>
-        <g transform="translate(100, 50) rotate(-20)">
-            <rect x="-55" y="-8" width="110" height="16" rx="4" fill="#64748b" stroke="#334155" stroke-width="1.5"/>
-        </g>
-        <!-- 僅保留雙向尺寸箭頭 -->
-        <line x1="173" y1="18" x2="173" y2="82" stroke="#dc2626" stroke-width="2"/>
-        <polyline points="170,22 173,18 176,22" fill="none" stroke="#dc2626" stroke-width="2"/>
-        <polyline points="170,78 173,82 176,78" fill="none" stroke="#dc2626" stroke-width="2"/>
-        <text x="100" y="98" font-family="sans-serif" font-size="11" font-weight="bold" fill="#1e293b" text-anchor="middle">標準投影外框 (AABB)</text>
-    </svg>
+
+def set_cell_value_safe(ws, row: int, col: int, value: Any, font: Optional[Font] = None):
     """
+    安全填寫儲存格：若遇到 MergedCell (唯讀)，自動尋找並寫入該合併區塊最左上角的 Master Cell，
+    並可同步套用指定字體。
+    """
+    try:
+        cell = ws.cell(row=row, column=col)
+        if type(cell).__name__ == 'MergedCell':
+            for rng in ws.merged_cells.ranges:
+                if cell.coordinate in rng:
+                    master_cell = ws.cell(row=rng.min_row, column=rng.min_col)
+                    master_cell.value = value
+                    if font:
+                        master_cell.font = font
+                    return
+        cell.value = value
+        if font:
+            cell.font = font
+    except Exception:
+        pass
 
-    col_img1, col_img2 = st.columns(2)
-    with col_img1:
-        st.markdown(f'<div class="diagram-card-box">{svg_obb}</div>', unsafe_allow_html=True)
-        st.markdown("""
-        **【OBB 最小素材包容盒】**
-        * 貼合零件幾何方向旋轉量測
-        * 素材精確省料 (如傾斜零件估得 4mm)
-        * **適用**：CNC 實體備料估價
-        """, unsafe_allow_html=True)
-    with col_img2:
-        st.markdown(f'<div class="diagram-card-box">{svg_aabb}</div>', unsafe_allow_html=True)
-        st.markdown("""
-        **【AABB 標準投影外框】**
-        * 沿世界座標軸 (X/Y/Z) 垂直外包
-        * 包含傾斜投影落差 (如傾斜零件估得 9mm)
-        * **適用**：外箱體積、正交零件估價
-        """, unsafe_allow_html=True)
 
-uploaded_files = st.file_uploader(
-    "上傳 CAD 圖檔 (可多選)", 
-    type=["step", "stp", "igs", "iges"],
-    accept_multiple_files=True,
-    key=f"file_uploader_{st.session_state.uploader_key_num}"
-)
-
-if uploaded_files:
-    st.write(f"已選擇 **{len(uploaded_files)}** 個檔案。")
-
-    if st.button("🎯 辨識 CAD 單據與幾何內容", type="primary"):
-        cleanup_temp_files()
-
-        parsed_results = []
-        progress_bar = st.progress(0)
-        status_text = st.empty()
-
-        for idx, uploaded_file in enumerate(uploaded_files):
-            status_text.text(f"正在辨識 ({idx+1}/{len(uploaded_files)}): {uploaded_file.name} ...")
+def calculate_obb_dimensions(model: cq.Workplane) -> List[float]:
+    """
+    使用 OpenCASCADE 原生 Bnd_OBB 精確計算 3D 實體的最小素材包容盒 (OBB)
+    """
+    if HAS_OCP_OBB:
+        try:
+            occ_shape = model.val().wrapped
+            obb = Bnd_OBB()
+            # 建立精確之 Optimal Bounding Box
+            BRepBndLib.AddOBB_s(occ_shape, obb, True, True, True)
             
-            ext = os.path.splitext(uploaded_file.name)[1]
-            with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp_file:
-                tmp_file.write(uploaded_file.getvalue())
-                tmp_path = tmp_file.name
-                st.session_state.temp_files_list.append(tmp_path)
+            # XSize, YSize, ZSize 即為 OBB 之全尺寸 (長/寬/高)
+            dims = [obb.XSize(), obb.YSize(), obb.ZSize()]
+            if all(d > 0 for d in dims):
+                return dims
+        except Exception:
+            pass
 
-            result = parse_cad_with_screenshot(tmp_path, mode=calc_mode_selected)
-            result["file_name"] = uploaded_file.name
-            parsed_results.append(result)
+    # 若計算失敗或缺乏 OCP 模組，備援退回基本 BoundingBox
+    bbox = model.val().BoundingBox()
+    return [bbox.xlen, bbox.ylen, bbox.zlen]
 
-            if result.get("image_path"):
-                st.session_state.temp_files_list.append(result["image_path"])
 
-            progress_bar.progress((idx + 1) / len(uploaded_files))
+def parse_cad_with_screenshot(file_path: str, mode: str = "OBB") -> Dict[str, Any]:
+    """
+    讀取 CAD 檔案，依指定模式 (OBB 或 AABB) 提取邊界尺寸，並無條件進位至個位數整數 (math.ceil)。
+    """
+    if not os.path.exists(file_path):
+        raise FileNotFoundError(f"找不到檔案：{file_path}")
 
-        status_text.success("🎉 所有檔案辨識完成！已自動套用範本檔填入數據。")
+    ext = os.path.splitext(file_path)[1].lower()
+    valid_extensions = ('.step', '.stp', '.igs', '.iges')
+    if ext not in valid_extensions:
+        raise ValueError(f"不支援的格式 '{ext}'")
 
-        has_xlsm_template = os.path.exists("template.xlsm") or os.path.exists("Template.xlsm")
-        export_ext = ".xlsm" if has_xlsm_template else ".xlsx"
-        mime_type = "application/vnd.ms-excel.sheet.macroEnabled.12" if has_xlsm_template else "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    # 1. 幾何長寬高解析與整數進位處理
+    try:
+        if ext in ('.step', '.stp'):
+            model = cq.importers.importStep(file_path)
+        elif ext in ('.igs', '.iges'):
+            try:
+                model = cq.importers.importShape(file_path)
+            except Exception:
+                from OCP.IGESControl import IGESControl_Reader
+                reader = IGESControl_Reader()
+                reader.ReadFile(file_path)
+                reader.TransferRoots()
+                occ_shape = reader.Shape()
+                model = cq.Workplane("XY").newObject([cq.Shape.cast(occ_shape)])
 
-        excel_tmp = tempfile.NamedTemporaryFile(delete=False, suffix=export_ext)
-        excel_path = excel_tmp.name
-        excel_tmp.close()
-        st.session_state.temp_files_list.append(excel_path)
+        if mode == "OBB":
+            raw_dims = calculate_obb_dimensions(model)
+        else:
+            bbox = model.val().BoundingBox()
+            raw_dims = [bbox.xlen, bbox.ylen, bbox.zlen]
 
-        header_info = {
-            "customer": customer_input,
-            "contact": contact_input,
-            "phone": phone_input,
-            "fax": fax_input
+        # 無條件進位至個位數整數
+        x_len = math.ceil(raw_dims[0])
+        y_len = math.ceil(raw_dims[1])
+        z_len = math.ceil(raw_dims[2])
+
+        dims_sorted: List[int] = sorted([x_len, y_len, z_len], reverse=True)
+
+        length_val = dims_sorted[0]
+        width_val = dims_sorted[1]
+        height_val = dims_sorted[2]
+
+        dimensions_str = f"{length_val}*{width_val}*{height_val}"
+    except Exception as e:
+        return {
+            "status": "error",
+            "file_name": os.path.basename(file_path),
+            "error_message": f"CAD 幾何解析失敗: {str(e)}"
         }
 
-        generate_excel_report(parsed_results, excel_path, header_info=header_info)
+    # 2. 獨立截圖流程
+    img_path = None
+    try:
+        img_tmp = tempfile.NamedTemporaryFile(delete=False, suffix='.png')
+        img_path_candidate = img_tmp.name
+        img_tmp.close()
 
-        with open(excel_path, "rb") as f:
-            excel_bytes = f.read()
+        svg_tmp = tempfile.NamedTemporaryFile(delete=False, suffix='.svg')
+        svg_path = svg_tmp.name
+        svg_tmp.close()
 
-        st.session_state.parsed_results = parsed_results
-        st.session_state.excel_bytes = excel_bytes
-        st.session_state.export_ext = export_ext
-        st.session_state.mime_type = mime_type
+        cq.exporters.export(model, svg_path, opt={"projectionDir": (1, 1, 1), "showHidden": False})
 
-if st.session_state.parsed_results:
-    st.subheader("📋 辨識結果預覽")
-    for res in st.session_state.parsed_results:
-        if res.get("status") == "success":
-            # 針對 Markdown 顯示進行星號反斜線轉義 (\*)，徹底避免 Markdown 斜體解析吃掉星號變 62209
-            display_dims_escaped = res['dimensions_str'].replace("*", "\\*")
+        with Image.open(svg_path) as img:
+            img_resized = img.resize((400, 300))
+            img_resized.save(img_path_candidate, format="PNG")
+
+        img_path = img_path_candidate
+
+        if os.path.exists(svg_path):
+            os.remove(svg_path)
+    except Exception:
+        img_path = None
+
+    return {
+        "status": "success",
+        "file_name": os.path.basename(file_path),
+        "dimensions_str": dimensions_str,
+        "length": length_val,
+        "width": width_val,
+        "height": height_val,
+        "unit": "mm",
+        "image_path": img_path
+    }
+
+
+def generate_excel_report(
+    parsed_results: List[Dict[str, Any]], 
+    output_excel_path: str,
+    header_info: Optional[Dict[str, Any]] = None
+):
+    """
+    載入範本檔，寫入客戶表頭資訊與解析數據，全數指定字體為標楷體，並自動調整 B/P 欄寬。
+    """
+    template_candidates = [
+        "template.xlsm", "template.xlsx", "template.xls",
+        "Template.xlsm", "Template.xlsx", "Template.xls"
+    ]
+    template_file = None
+    for tf in template_candidates:
+        if os.path.exists(tf):
+            template_file = tf
+            break
+
+    is_xlsm = template_file and template_file.lower().endswith('.xlsm')
+
+    if template_file:
+        wb = openpyxl.load_workbook(template_file, data_only=False, keep_vba=is_xlsm)
+        ws = wb.active
+    else:
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "報價單"
+
+    # 統一標楷體 Font 物件
+    kai_font_regular = Font(name="標楷體", size=11, bold=False)
+    kai_font_bold = Font(name="標楷體", size=11, bold=True)
+
+    # 1. 使用 safe_str + set_cell_value_safe 安全寫入 B4~B7 表頭客戶資訊
+    if header_info and isinstance(header_info, dict):
+        customer_val = safe_str(header_info.get("customer"))
+        contact_val = safe_str(header_info.get("contact"))
+        phone_val = safe_str(header_info.get("phone"))
+        fax_val = safe_str(header_info.get("fax"))
+
+        if customer_val:
+            set_cell_value_safe(ws, 4, 2, f"客戶名稱 : {customer_val}", font=kai_font_regular)
             
-            with st.expander(f"📄 {res['file_name']} - 【尺寸：{display_dims_escaped} mm】"):
-                st.write(f"**品名 (檔名)**：{res['file_name']}")
-                st.write(f"**尺寸 (長\\*寬\\*高，無條件進位)**：{display_dims_escaped}")
-                st.write(f"**拆解數值**：長 {res.get('length')} / 寬 {res.get('width')} / 高 {res.get('height')}")
-                st.write(f"**單位**：{res['unit']}")
-        else:
-            st.error(f"❌ {res['file_name']} 解析失敗：{res.get('error_message')}")
+        if contact_val:
+            set_cell_value_safe(ws, 5, 2, f"聯 絡 人 : {contact_val}", font=kai_font_regular)
 
-    st.markdown("---")
-    col_dl, col_rst = st.columns([2, 1])
-    
-    today_date_str = datetime.now().strftime("%Y%m%d")
-    download_filename = f"CAD_Quotation_Report_{today_date_str}{st.session_state.export_ext}"
-    
-    with col_dl:
-        st.download_button(
-            label=f"📊 下載完整 CAD 報價單 Excel 檔 ({st.session_state.export_ext})",
-            data=st.session_state.excel_bytes,
-            file_name=download_filename,
-            mime=st.session_state.mime_type,
-            use_container_width=True
-        )
+        if phone_val:
+            set_cell_value_safe(ws, 6, 2, f"聯絡電話 : {phone_val}", font=kai_font_regular)
+
+        if fax_val:
+            set_cell_value_safe(ws, 7, 2, f"傳    真 : {fax_val}", font=kai_font_regular)
+
+    # 2. 填入當天報價日期於 O7 欄位
+    today_str = datetime.now().strftime("%Y/%m/%d")
+    set_cell_value_safe(ws, 7, 15, today_str, font=kai_font_regular)
+
+    # 3. 寫入資料（由第 10 列起）並記錄最大文字長度以調整欄寬
+    start_row = 10
+    max_b_len = 12  # 品名欄最小字元計算基準
+    max_p_len = 16  # 尺寸欄最小字元計算基準
+
+    for idx, item in enumerate(parsed_results):
+        row_num = start_row + idx
         
-    with col_rst:
-        if st.button("🔄 重置 / 準備下一批報價", on_click=reset_session, use_container_width=True):
-            st.rerun()
+        # A 欄: 序項
+        cell_a = ws.cell(row=row_num, column=1, value=idx + 1)
+        cell_a.font = kai_font_regular
+        
+        # B 欄: 品名
+        file_name = item.get("file_name", "")
+        cell_b = ws.cell(row=row_num, column=2, value=file_name)
+        cell_b.font = kai_font_regular
+        max_b_len = max(max_b_len, len(str(file_name)))
+        
+        # P 欄: 尺寸整合字串 (長*寬*高)
+        dims_str = item.get("dimensions_str", "")
+        cell_p = ws.cell(row=row_num, column=16, value=dims_str)
+        cell_p.font = kai_font_bold
+        max_p_len = max(max_p_len, len(str(dims_str)))
+        
+        # Q, R, S 欄: 長、寬、高拆解數值 (統一標楷體粗體)
+        if "length" in item:
+            cell_q = ws.cell(row=row_num, column=17, value=item["length"])
+            cell_q.font = kai_font_bold
+        if "width" in item:
+            cell_r = ws.cell(row=row_num, column=18, value=item["width"])
+            cell_r.font = kai_font_bold
+        if "height" in item:
+            cell_s = ws.cell(row=row_num, column=19, value=item["height"])
+            cell_s.font = kai_font_bold
+            
+        # T 欄: 單位 (mm)
+        cell_t = ws.cell(row=row_num, column=20, value=item.get("unit", "mm"))
+        cell_t.font = kai_font_regular
+
+        # 明細金額計算公式
+        c_g = ws.cell(row=row_num, column=7, value=f"=E{row_num}*F{row_num}")
+        c_j = ws.cell(row=row_num, column=10, value=f"=H{row_num}*I{row_num}")
+        c_m = ws.cell(row=row_num, column=13, value=f"=K{row_num}*L{row_num}")
+        c_g.font = kai_font_regular
+        c_j.font = kai_font_regular
+        c_m.font = kai_font_regular
+
+    # 4. 動態欄寬自動保護
+    ws.column_dimensions['B'].width = max(ws.column_dimensions['B'].width or 0, max_b_len + 6)
+    ws.column_dimensions['P'].width = max(ws.column_dimensions['P'].width or 0, max_p_len + 6)
+
+    # 5. 動態尋找「合計」列號（預設第 101 列）
+    total_row = 101
+    for r in range(10, ws.max_row + 1):
+        cell_a_val = str(ws.cell(row=r, column=1).value or "").replace(" ", "")
+        cell_b_val = str(ws.cell(row=r, column=2).value or "").replace(" ", "")
+        cell_c_val = str(ws.cell(row=r, column=3).value or "").replace(" ", "")
+        
+        if "合計" in cell_a_val or "合計" in cell_b_val or "合計" in cell_c_val:
+            total_row = r
+            break
+
+    # 6. 使用 set_cell_value_safe 安全寫入合計加總公式
+    data_end_row = total_row - 1
+    set_cell_value_safe(ws, total_row, 7, f"=SUM(G10:G{data_end_row})", font=kai_font_bold)
+    set_cell_value_safe(ws, total_row, 10, f"=SUM(J10:J{data_end_row})", font=kai_font_bold)
+    set_cell_value_safe(ws, total_row, 13, f"=SUM(M10:M{data_end_row})", font=kai_font_bold)
+    set_cell_value_safe(ws, total_row, 15, f"=G{total_row}+J{total_row}+M{total_row}", font=kai_font_bold)
+
+    wb.save(output_excel_path)
