@@ -1,8 +1,9 @@
 """
 cad_parser.py - CAD 解析與報表產出模組
-Version: v2.3.2_20260821
+Version: v2.4.0_20260821
 Description: 支援載入 template.xlsm / template.xlsx 範本檔。
-             修正 OCP Bnd_OBB API (XHSize*2) 呼叫錯誤，成功觸發真 OBB 計算。
+             同時計算 OBB 與 AABB，自動採納素材體積較小者。
+             採用 OpenCASCADE 原生 Bnd_OBB API (XHSize*2) 計算精確最小包容盒。
              尺寸採 math.ceil 無條件進位至個位數整數。
              使用 safe_str + set_cell_value_safe 安全寫入 B4~B7 表頭資訊，
              B/P 欄自動調整欄寬，全數儲存格統一指定為「標楷體」。
@@ -84,9 +85,9 @@ def calculate_obb_dimensions(model: cq.Workplane) -> List[float]:
     return [bbox.xlen, bbox.ylen, bbox.zlen]
 
 
-def parse_cad_with_screenshot(file_path: str, mode: str = "OBB") -> Dict[str, Any]:
+def parse_cad_with_screenshot(file_path: str) -> Dict[str, Any]:
     """
-    讀取 CAD 檔案，依指定模式 (OBB 或 AABB) 提取邊界尺寸，並無條件進位至個位數整數 (math.ceil)。
+    讀取 CAD 檔案，同時計算 OBB 與 AABB 尺寸，並自動採納素材體積較小者。
     """
     if not os.path.exists(file_path):
         raise FileNotFoundError(f"找不到檔案：{file_path}")
@@ -96,7 +97,7 @@ def parse_cad_with_screenshot(file_path: str, mode: str = "OBB") -> Dict[str, An
     if ext not in valid_extensions:
         raise ValueError(f"不支援的格式 '{ext}'")
 
-    # 1. 幾何長寬高解析與整數進位處理
+    # 1. 幾何長寬高雙軌解析與體積最小化比對
     try:
         if ext in ('.step', '.stp'):
             model = cq.importers.importStep(file_path)
@@ -111,22 +112,29 @@ def parse_cad_with_screenshot(file_path: str, mode: str = "OBB") -> Dict[str, An
                 occ_shape = reader.Shape()
                 model = cq.Workplane("XY").newObject([cq.Shape.cast(occ_shape)])
 
-        if mode == "OBB":
-            raw_dims = calculate_obb_dimensions(model)
+        # A. OBB 最小包容盒運算
+        raw_dims_obb = calculate_obb_dimensions(model)
+        x_obb = math.ceil(raw_dims_obb[0])
+        y_obb = math.ceil(raw_dims_obb[1])
+        z_obb = math.ceil(raw_dims_obb[2])
+        sorted_obb = sorted([x_obb, y_obb, z_obb], reverse=True)
+        vol_obb = sorted_obb[0] * sorted_obb[1] * sorted_obb[2]
+
+        # B. AABB 標準投影外框運算
+        bbox = model.val().BoundingBox()
+        x_aabb = math.ceil(bbox.xlen)
+        y_aabb = math.ceil(bbox.ylen)
+        z_aabb = math.ceil(bbox.zlen)
+        sorted_aabb = sorted([x_aabb, y_aabb, z_aabb], reverse=True)
+        vol_aabb = sorted_aabb[0] * sorted_aabb[1] * sorted_aabb[2]
+
+        # C. 自動採納體積較小者 (Min-Volume Selection)
+        if vol_obb <= vol_aabb:
+            length_val, width_val, height_val = sorted_obb[0], sorted_obb[1], sorted_obb[2]
+            used_mode = "OBB"
         else:
-            bbox = model.val().BoundingBox()
-            raw_dims = [bbox.xlen, bbox.ylen, bbox.zlen]
-
-        # 無條件進位至個位數整數
-        x_len = math.ceil(raw_dims[0])
-        y_len = math.ceil(raw_dims[1])
-        z_len = math.ceil(raw_dims[2])
-
-        dims_sorted: List[int] = sorted([x_len, y_len, z_len], reverse=True)
-
-        length_val = dims_sorted[0]
-        width_val = dims_sorted[1]
-        height_val = dims_sorted[2]
+            length_val, width_val, height_val = sorted_aabb[0], sorted_aabb[1], sorted_aabb[2]
+            used_mode = "AABB"
 
         dimensions_str = f"{length_val}*{width_val}*{height_val}"
     except Exception as e:
@@ -168,6 +176,7 @@ def parse_cad_with_screenshot(file_path: str, mode: str = "OBB") -> Dict[str, An
         "width": width_val,
         "height": height_val,
         "unit": "mm",
+        "used_mode": used_mode,
         "image_path": img_path
     }
 
