@@ -1,16 +1,10 @@
 """
 app.py - Streamlit 網頁介面程式
-Version: v2.6.0_20260821
+Version: v2.6.1_20260821
 Description: 提供 CAD 報價辨識工具。
-             Phase 1 升級：展示第三角法 (Third-Angle) 工程三視圖 + 等角圖卡預覽。
-             自動同步計算 OBB/AABB 並取小值採納，
-             展示「加工素材計算採用下列兩種方式之最小值」圖文說明區塊，
-             視窗預覽標註尺寸來源模式 (OBB 或 AABB)，
-             支援獨立生成與下載 Word 圖文報價單 (.docx) 含工程視圖圖卡，
-             含完整 image_error 錯誤診斷碼展現。
-             Markdown 顯示轉義星號 (\\.replace("*", "\\*")) 解決顯示問題，
-             原生輸入框帶 Tab 切換提示，
-             一鍵重置 Widget Key，頁尾含個人頭像徽章 (Design by Max)。
+             - 底部按鈕改為 st.columns(3) 等分，並統一使用 width="stretch"。
+             - 展示第三角法工程三視圖 + 等角圖卡預覽。
+             - 保持所有資料解析、OBB/AABB 邏輯與重置功能完整。
 """
 
 import streamlit as st
@@ -95,7 +89,7 @@ def inject_custom_elements():
     }}
     </style>
     
-    <div class="version-badge-left">Version: v2.6.0_20260821</div>
+    <div class="version-badge-left">Version: v2.6.1_20260821</div>
     
     <div class="custom-footer-max">
         {avatar_html}
@@ -125,11 +119,10 @@ def reset_session():
     st.session_state.word_bytes = None
     st.session_state.export_ext = ".xlsx"
     st.session_state.mime_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    
     st.session_state.uploader_key_num += 1
 
 
-st.set_page_config(page_title="CAD 報價辨識工具 (v2.6.0)", page_icon="⚙️", layout="centered")
+st.set_page_config(page_title="CAD 報價辨識工具 (v2.6.1)", page_icon="⚙️", layout="centered")
 
 inject_custom_elements()
 
@@ -252,7 +245,6 @@ if uploaded_files:
             "fax": fax_input
         }
 
-        # 1. 產生 Excel 報表
         has_xlsm_template = os.path.exists("template.xlsm") or os.path.exists("Template.xlsm")
         export_ext = ".xlsm" if has_xlsm_template else ".xlsx"
         mime_type = "application/vnd.ms-excel.sheet.macroEnabled.12" if has_xlsm_template else "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
@@ -267,7 +259,6 @@ if uploaded_files:
         with open(excel_path, "rb") as f:
             excel_bytes = f.read()
 
-        # 2. 產生 Word 圖文報表 (含三視圖圖卡)
         word_bytes = None
         try:
             word_tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".docx")
@@ -316,7 +307,8 @@ if st.session_state.parsed_results:
 
     st.markdown("---")
     
-    col_dl1, col_dl2, col_rst = st.columns([2, 2, 1])
+    # 底部按鈕改為 st.columns(3) 等分，並統一使用 width="stretch"
+    col_dl1, col_dl2, col_rst = st.columns(3)
     
     today_date_str = datetime.now().strftime("%Y%m%d")
     download_excel_name = f"CAD_Quotation_Report_{today_date_str}{st.session_state.export_ext}"
@@ -328,7 +320,7 @@ if st.session_state.parsed_results:
             data=st.session_state.excel_bytes,
             file_name=download_excel_name,
             mime=st.session_state.mime_type,
-            use_container_width=True
+            width="stretch"
         )
 
     with col_dl2:
@@ -338,11 +330,10 @@ if st.session_state.parsed_results:
                 data=st.session_state.word_bytes,
                 file_name=download_word_name,
                 mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                use_container_width=True
+                width="stretch"
             )
         else:
-            st.button("📝 Word 報表不可用", disabled=True, use_container_width=True)
+            st.button("📝 Word 報表不可用", disabled=True, width="stretch")
         
     with col_rst:
-        if st.button("🔄 重置 / 準備下一批", on_click=reset_session, use_container_width=True):
-            st.rerun()
+        st.button("🔄 重置 / 準備下一批", on_click=reset_session, width="stretch")
