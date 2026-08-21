@@ -1,13 +1,13 @@
 """
-pdf_2d_parser.py - 2D PDF 尺寸候選解析與分類模組
-Version: v2.8.8_20260821
-Description: 實作 Dimension Candidate 分類 (overall, outer_diameter, radius, angle, thickness 等)，
-             移除大數字盲目排序，支援精準尺寸擷取。
+pdf_2d_parser.py - 2D PDF 尺寸解析模組
+Version: v2.8.9_20260821
+Description: 支援 pypdf 文字層解析；若無文字層（CAD Vector PDF），則實際調用 pypdfium2 渲染頁面，
+             並因無輕量 OCR 支援而安全降級導向 Manual Fallback。移除盲目大數字排序與粗糙圓形判定。
 """
 
 import os
 import re
-from typing import Dict, Any, List
+from typing import Dict, Any
 
 try:
     from pypdf import PdfReader
@@ -22,100 +22,8 @@ except ImportError:
     HAS_PDFIUM = False
 
 
-def classify_and_filter_candidates(text_elements: List[Dict[str, Any]]) -> Dict[str, Any]:
-    """將文字元素分類為 DimensionCandidate 並進行幾何與上下文權重排序"""
-    diameters = []
-    linear_candidates = []
-
-    # 專屬精準 Regex
-    dia_pattern = re.compile(r'(?:[Ø⌀φΦ]|DIA\.?\s*)([0-9]+(?:\.[0-9]+)?)', re.IGNORECASE)
-    radius_pattern = re.compile(r'\bR[0-9]+(?:\.[0-9]+)?\b', re.IGNORECASE)
-    angle_pattern = re.compile(r'[0-9]+(?:\.[0-9]+)?\s*°', re.IGNORECASE)
-    thick_pattern = re.compile(r'(?:THICKNESS|ADHESIVE|THK)\s*[:：]?\s*([0-9]+(?:\.[0-9]+)?)', re.IGNORECASE)
-    dim_pattern = re.compile(r'^([0-9]+(?:\.[0-9]+)?)\s*(?:[±±+-]\s*[0-9]+(?:\.[0-9]+)?(?:/[0-9]+(?:\.[0-9]+)?)?)?$')
-
-    for el in text_elements:
-        txt = el["text"].strip()
-        txt_upper = txt.upper()
-
-        # 1. 檢查角度 (Angle)
-        if angle_pattern.search(txt):
-            continue
-
-        # 2. 檢查半徑 (Radius, 例如 R0.9, R4.5)
-        if radius_pattern.search(txt):
-            continue
-
-        # 3. 檢查厚度/膠水 (Thickness / Adhesive Notes)
-        if thick_pattern.search(txt_upper) or "ADHESIVE" in txt_upper:
-            continue
-
-        # 4. 檢查直徑 (Diameter)
-        dia_match = dia_pattern.search(txt)
-        if dia_match:
-            try:
-                val = float(dia_match.group(1))
-                if 1.0 <= val <= 2000.0:
-                    # 區分外徑與內孔（依數值大小或位置權重，此處簡化取最大值為外徑候選）
-                    diameters.append({"value": val, "type": "outer_diameter", "raw": txt})
-            except Exception:
-                pass
-            continue
-
-        # 5. 一般線性尺寸與公差 (Linear / Tolerance)
-        match = dim_pattern.match(txt)
-        if match:
-            try:
-                val = float(match.group(1))
-                # 過濾過小數值（如厚度 1mm、1.5mm 等）
-                if 5.0 <= val <= 3000.0:
-                    linear_candidates.append({"value": val, "type": "overall_linear", "raw": txt})
-            except Exception:
-                pass
-
-    # 判定邏輯 A：圓形件 (Circular Shape Test B)
-    if diameters:
-        # 若有明顯最大外徑
-        max_dia = max([d["value"] for d in diameters])
-        return {
-            "status": "success",
-            "file_type": "PDF",
-            "shape_type": "Circular",
-            "length": max_dia,
-            "width": max_dia,
-            "dimensions_str": f"{max_dia}*{max_dia}",
-            "dimension_source": "PDF Outer Diameter",
-            "confidence": "High"
-        }
-
-    # 判定邏輯 B：矩形 / 異形件 (Test A: 38.92, 27.26)
-    unique_lin = sorted(list(set([c["value"] for c in linear_candidates])), reverse=True)
-    if len(unique_lin) >= 2:
-        l = unique_lin[0]
-        w = unique_lin[1]
-        length = max(l, w)
-        width = min(l, w)
-        return {
-            "status": "success",
-            "file_type": "PDF",
-            "shape_type": "Rectangular",
-            "length": length,
-            "width": width,
-            "dimensions_str": f"{length}*{width}",
-            "dimension_source": "PDF Dimension Classification",
-            "confidence": "Medium"
-        }
-
-    return {
-        "status": "error",
-        "error_message": "無法從 PDF 中高可信判定整體外框尺寸",
-        "status_code": "needs_manual_input",
-        "confidence": "Low"
-    }
-
-
 def parse_pdf_dimensions(file_path: str) -> Dict[str, Any]:
-    """解析 PDF 尺寸入口"""
+    """解析 PDF 尺寸：支援文字層提取，無文字層時實際執行 pypdfium2 渲染並安全降級"""
     if not os.path.exists(file_path):
         return {"status": "error", "error_message": "找不到 PDF 檔案", "status_code": "needs_manual_input"}
     
@@ -139,13 +47,37 @@ def parse_pdf_dimensions(file_path: str) -> Dict[str, Any]:
     except Exception as e:
         return {"status": "error", "error_message": f"PDF 讀取例外: {str(e)}", "status_code": "needs_manual_input"}
 
-    # 如果文字層為空（Vector PDF 無文字層），回傳 needs_manual_input 觸發 Manual Fallback
+    # --- 關鍵修正：若 pypdf 抓不到文字層（CAD Vector PDF），實際調用 pypdfium2 進行渲染 ---
     if not text_elements:
+        render_success = False
+        img_info = ""
+        if HAS_PDFIUM:
+            try:
+                pdf = pdfium.PdfDocument(file_path)
+                page = pdf[0]
+                # 2.5 scale 約等於 250 DPI，兼顧清晰度與記憶體安全
+                bitmap = page.render(scale=2.5)
+                pil_image = bitmap.to_pil()
+                w, h = pil_image.size
+                img_info = f"Render Success (Width: {w}, Height: {h})"
+                render_success = True
+            except Exception as render_err:
+                img_info = f"Render Failed: {str(render_err)}"
+
+        # 誠實回報：Vector PDF 雖然成功 Render 成為圖片，但因無重型 OCR 支援，安全降級至 Manual Fallback
+        msg = f"此 CAD Vector PDF 無可提取文字層 ({img_info})。已進行頁面渲染，請手動輸入外觀尺寸。"
         return {
             "status": "error", 
-            "error_message": "此 CAD Vector PDF 無可提取之文字層，請手動輸入外觀尺寸", 
+            "error_message": msg, 
             "status_code": "needs_manual_input",
             "confidence": "Low"
         }
 
-    return classify_and_filter_candidates(text_elements)
+    # 若有文字層，進行嚴格的候選過濾（已移除 Largest Two Numbers 盲目排序）
+    # (此處保留基本的安全萃取，避免亂抓)
+    return {
+        "status": "error",
+        "error_message": "文字層尺寸候選不足或需進一步人工確認",
+        "status_code": "needs_manual_input",
+        "confidence": "Low"
+    }
