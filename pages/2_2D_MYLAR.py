@@ -1,9 +1,7 @@
 """
-pages/2_2D_Mylar.py - 2D Mylar / DXF 材料辨識專屬頁面
-Version: v2.8.3_20260821
-Description: 專責 DXF 上傳、Mylar 厚度與材質設定、2D 輪廓解析與預覽。
-             使用獨立的 2D Session State、專屬 Reset 邏輯與返回首頁導航。
-             動態適配 .xlsm/.xlsx 副檔名與對應 MIME 類型。
+pages/2_2D_MYLAR.py - 2D Mylar / 模切材料快速報價頁面
+Version: v2.8.4_20260821
+Description: 支援 PDF / DXF 混合上傳，具備 PDF 尺寸提取、人工確認與手動 Fallback 機制。
 """
 
 import streamlit as st
@@ -12,10 +10,11 @@ import sys
 import tempfile
 from datetime import datetime
 
-# --- 修復模組路徑：確保能正確引用根目錄 ---
+# --- 修復模組路徑 ---
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from dxf_parser import parse_dxf_2d
+from pdf_2d_parser import parse_pdf_2d
 from cad_parser import generate_excel_report, generate_word_report, is_valid_image
 
 
@@ -38,13 +37,13 @@ def reset_2d_session():
     st.session_state.uploader_2d_key += 1
 
 
-st.set_page_config(page_title="2D Mylar 材料辨識", page_icon="📄", layout="centered")
+st.set_page_config(page_title="2D Mylar 快速報價", page_icon="📄", layout="centered")
 
 if st.button("← 返回功能首頁"):
     st.switch_page("app.py")
 
-st.title("📄 2D Mylar / 模切材料辨識")
-st.write("上傳 `.dxf` 2D 模切圖檔，設定材料厚度與類型以計算外形尺寸與面積。")
+st.title("📄 2D Mylar / 模切材料快速報價系統")
+st.write("上傳 `.pdf` 或 `.dxf` 2D 圖檔（可多選），系統自動擷取外形尺寸以進行快速報價。")
 
 if "uploader_2d_key" not in st.session_state:
     st.session_state.uploader_2d_key = 0
@@ -52,8 +51,6 @@ if "parsed_2d_results" not in st.session_state:
     st.session_state.parsed_2d_results = None
 if "excel_2d_bytes" not in st.session_state:
     st.session_state.excel_2d_bytes = None
-if "word_2d_bytes" not in st.session_state:
-    st.session_state.word_2d_bytes = None
 if "temp_files_2d" not in st.session_state:
     st.session_state.temp_files_2d = []
 
@@ -77,19 +74,24 @@ with st.expander("🧪 2D 模切材料參數設定", expanded=True):
         else:
             selected_thickness = float(thickness_option)
 
-st.info("⚠️ **DWG 提示**：DWG 目前不直接解析，請先將 DWG 另存為 DXF 後再上傳。")
+# 驗證 Thickness > 0
+if selected_thickness <= 0:
+    st.error("⚠️ 請輸入有效的材料厚度（必須大於 0）")
+    st.stop()
+
+st.info("⚠️ **DWG 提示**：DWG 目前不直接解析；正式製作請提供 DXF / DWG 工程資料。")
 
 uploaded_2d_files = st.file_uploader(
-    "上傳 2D DXF 圖檔 (可多選)", 
-    type=["dxf"],
+    "上傳 2D 模切圖檔（可多選）\n\n支援格式：PDF / DXF", 
+    type=["pdf", "dxf"],
     accept_multiple_files=True,
     key=f"uploader_2d_{st.session_state.uploader_2d_key}"
 )
 
 if uploaded_2d_files:
-    st.write(f"已選擇 **{len(uploaded_2d_files)}** 個 DXF 檔案。")
+    st.write(f"已選擇 **{len(uploaded_2d_files)}** 個 2D 檔案。")
 
-    if st.button("🎯 開始 2D 輪廓與面積辨識", type="primary", width="stretch"):
+    if st.button("🎯 開始 2D 尺寸快速辨識", type="primary", width="stretch"):
         cleanup_2d_temp()
         parsed_results = []
         progress_bar = st.progress(0)
@@ -97,28 +99,117 @@ if uploaded_2d_files:
 
         for idx, up_file in enumerate(uploaded_2d_files):
             fname = up_file.name
-            status_text.text(f"正在處理 DXF 檔案 ({idx+1}/{len(uploaded_2d_files)}): {fname} ...")
+            ext = os.path.splitext(fname)[1].lower()
+            status_text.text(f"正在處理檔案 ({idx+1}/{len(uploaded_2d_files)}): {fname} ...")
 
-            with tempfile.NamedTemporaryFile(delete=False, suffix=".dxf") as tmp:
+            with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp:
                 tmp.write(up_file.getvalue())
                 tmp_path = tmp.name
                 st.session_state.temp_files_2d.append(tmp_path)
 
-            res = parse_dxf_2d(tmp_path, user_thickness=selected_thickness)
-            res["file_name"] = fname
-            res["material_type"] = material_type
-            parsed_results.append(res)
-
-            if res.get("image_path"):
-                st.session_state.temp_files_2d.append(res["image_path"])
+            if ext == '.dxf':
+                res = parse_dxf_2d(tmp_path, user_thickness=selected_thickness)
+                res["file_name"] = fname
+                res["source_type"] = "DXF"
+                res["dimension_source"] = "DXF Geometry"
+                res["confirmed"] = True
+                parsed_results.append(res)
+            elif ext == '.pdf':
+                res = parse_pdf_2d(tmp_path)
+                res["file_name"] = fname
+                res["source_type"] = "PDF"
+                res["thickness"] = selected_thickness
+                res["material_type"] = material_type
+                if res.get("status") == "success":
+                    l_val = max(res.get("length", 0), res.get("width", 0))
+                    w_val = min(res.get("length", 0), res.get("width", 0))
+                    res["length"] = l_val
+                    res["width"] = w_val
+                    res["dimensions_str"] = f"{l_val}*{w_val}"
+                    res["confirmed"] = False  # 需要人工確認
+                parsed_results.append(res)
 
             progress_bar.progress((idx + 1) / len(uploaded_2d_files))
 
-        status_text.success("🎉 2D DXF 檔案全部辨識完成！")
+        status_text.success("🎉 2D 檔案初步辨識完成！請在下方進行確認或手動調整。")
+        st.session_state.parsed_2d_results = parsed_results
 
+if st.session_state.parsed_2d_results:
+    st.subheader("📋 2D 快速報價尺寸確認與調整")
+    
+    updated_results = []
+    all_confirmed = True
+
+    for i, res in enumerate(st.session_state.parsed_2d_results):
+        fname = res.get("file_name", f"Item_{i}")
+        st.markdown(f"---")
+        st.markdown(f"### 檔案：`{fname}` ({res.get('source_type', 'Unknown')})")
+
+        if res.get("source_type") == "PDF":
+            st.info("ℹ️ **PDF Dimension / Quotation Reference Only**\n本尺寸依客戶提供 PDF 圖面標註進行估價；正式製作尺寸以經確認之 DXF / DWG 工程資料為準。")
+
+        if res.get("status") == "success":
+            default_l = float(res.get("length", 100.0))
+            default_w = float(res.get("width", 50.0))
+
+            col_u1, col_u2, col_u3 = st.columns(3)
+            with col_u1:
+                user_l = st.number_input(f"Length (mm) [{i}]", min_value=0.1, value=default_l, step=1.0, key=f"l_{i}")
+            with col_u2:
+                user_w = st.number_input(f"Width (mm) [{i}]", min_value=0.1, value=default_w, step=1.0, key=f"w_{i}")
+            with col_u3:
+                is_conf = st.checkbox(f"確認採用此尺寸 [{i}]", value=res.get("confirmed", False), key=f"conf_{i}")
+
+            # L >= W 正規化
+            final_l = max(user_l, user_w)
+            final_w = min(user_l, user_w)
+            gross_area = final_l * final_w
+
+            res["length"] = final_l
+            res["width"] = final_w
+            res["thickness"] = selected_thickness
+            res["material_type"] = material_type
+            res["dimensions_str"] = f"{final_l}*{final_w}"
+            res["gross_area"] = gross_area
+            res["net_area"] = gross_area
+            res["confirmed"] = is_conf
+
+            if not is_conf:
+                all_confirmed = False
+        else:
+            # 發生錯誤時提供手動 Fallback
+            st.warning(f"⚠️ 自動尺寸辨識失敗 ({res.get('error_message', '未知錯誤')})，請手動輸入尺寸。")
+            col_f1, col_f2, col_f3 = st.columns(3)
+            with col_f1:
+                manual_l = st.number_input(f"手動 Length (mm) [{i}]", min_value=0.1, value=100.0, step=1.0, key=f"ml_{i}")
+            with col_f2:
+                manual_w = st.number_input(f"手動 Width (mm) [{i}]", min_value=0.1, value=50.0, step=1.0, key=f"mw_{i}")
+            with col_f3:
+                manual_conf = st.checkbox(f"確認並採用手動尺寸 [{i}]", value=True, key=f"mconf_{i}")
+
+            final_l = max(manual_l, manual_w)
+            final_w = min(manual_l, manual_w)
+            gross_area = final_l * final_w
+
+            res["status"] = "success"
+            res["length"] = final_l
+            res["width"] = final_w
+            res["thickness"] = selected_thickness
+            res["material_type"] = material_type
+            res["dimensions_str"] = f"{final_l}*{final_w}"
+            res["gross_area"] = gross_area
+            res["net_area"] = gross_area
+            res["confirmed"] = manual_conf
+
+            if not manual_conf:
+                all_confirmed = False
+
+        updated_results.append(res)
+
+    st.markdown("---")
+    if all_confirmed:
         header_info = {"customer": customer_input, "contact": contact_input, "phone": phone_input, "fax": fax_input}
 
-        # --- 修正 Issue 1：動態檢測模板以決定副檔名與 MIME ---
         has_xlsm = os.path.exists("template.xlsm") or os.path.exists("Template.xlsm")
         export_ext = ".xlsm" if has_xlsm else ".xlsx"
 
@@ -127,70 +218,24 @@ if uploaded_2d_files:
         excel_tmp.close()
         st.session_state.temp_files_2d.append(excel_path)
 
-        generate_excel_report(parsed_results, excel_path, header_info=header_info)
+        generate_excel_report(updated_results, excel_path, header_info=header_info)
         with open(excel_path, "rb") as f:
             excel_bytes = f.read()
 
-        word_bytes = None
-        try:
-            word_tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".docx")
-            word_path = word_tmp.name
-            word_tmp.close()
-            st.session_state.temp_files_2d.append(word_path)
+        today_str = datetime.now().strftime("%Y%m%d")
+        download_ext = ".xlsm" if has_xlsm else ".xlsx"
+        download_mime = "application/vnd.ms-excel.sheet.macroEnabled.12" if has_xlsm else "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
-            generate_word_report(parsed_results, word_path, header_info=header_info)
-            with open(word_path, "rb") as f_w:
-                word_bytes = f_w.read()
-        except Exception as e_w:
-            st.warning(f"⚠️ Word 產生警告: {str(e_w)}")
-
-        st.session_state.parsed_2d_results = parsed_results
-        st.session_state.excel_2d_bytes = excel_bytes
-        st.session_state.word_2d_bytes = word_bytes
-
-if st.session_state.parsed_2d_results:
-    st.subheader("📋 2D Mylar 辨識結果預覽")
-    for res in st.session_state.parsed_2d_results:
-        if res.get("status") == "success":
-            dims_esc = res['dimensions_str'].replace("*", "\\*")
-            with st.expander(f"📄 {res['file_name']} - 【尺寸：{dims_esc} mm】"):
-                col1, col2 = st.columns([2, 3])
-                with col1:
-                    st.write(f"**檔名**：{res['file_name']}")
-                    st.write(f"**材料類型**：{res.get('material_type', 'Mylar')}")
-                    st.write(f"**外形尺寸**：{dims_esc} mm")
-                    st.write(f"**外形總面積**：{res.get('gross_area')} mm²")
-                    if res.get('unit_warning'):
-                        st.warning(res['unit_warning'])
-                with col2:
-                    if is_valid_image(res.get("image_path")):
-                        st.image(res["image_path"], caption="2D 材料輪廓預覽", use_container_width=True)
-                    else:
-                        st.warning("⚠️ 預覽圖產生失敗")
-        else:
-            st.error(f"❌ {res['file_name']} 解析失敗：{res.get('error_message')}")
-
-    st.markdown("---")
-    col1, col2, col3 = st.columns(3)
-    today_str = datetime.now().strftime("%Y%m%d")
-
-    # --- 修正 Issue 1：動態輸出按鈕參數 ---
-    has_xlsm = os.path.exists("template.xlsm") or os.path.exists("Template.xlsm")
-    download_ext = ".xlsm" if has_xlsm else ".xlsx"
-    download_mime = "application/vnd.ms-excel.sheet.macroEnabled.12" if has_xlsm else "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-
-    with col1:
-        st.download_button(
-            "📊 下載 Excel 報價單", 
-            st.session_state.excel_2d_bytes, 
-            f"2D_Report_{today_str}{download_ext}", 
-            mime=download_mime, 
-            width="stretch"
-        )
-    with col2:
-        if st.session_state.word_2d_bytes:
-            st.download_button("📝 下載圖文報告 (.docx)", st.session_state.word_2d_bytes, f"2D_Report_{today_str}.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", width="stretch")
-        else:
-            st.button("📝 Word 不可用", disabled=True, width="stretch")
-    with col3:
-        st.button("🔄 重置 2D 頁面", on_click=reset_2d_session, width="stretch")
+        col_b1, col_b2 = st.columns(2)
+        with col_b1:
+            st.download_button(
+                "📊 下載 2D 快速報價 Excel", 
+                excel_bytes, 
+                f"2D_Quotation_Report_{today_str}{download_ext}", 
+                mime=download_mime, 
+                width="stretch"
+            )
+        with col_b2:
+            st.button("🔄 重置 2D 頁面", on_click=reset_2d_session, width="stretch")
+    else:
+        st.warning("⚠️ 請確認並勾選所有檔案的「確認採用」後，即可解鎖 Excel 報價單下載。")
