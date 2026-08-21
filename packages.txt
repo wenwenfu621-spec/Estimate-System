@@ -1,8 +1,6 @@
-libcairo2
-libcairo2-dev
-libgl1-mesa-dev
+# packages.txt - Version: v2.5.1_20260821
+libgl1
 libglu1-mesa
-libglib2.0-0
 libx11-6
 libxext6
 libxrender1
