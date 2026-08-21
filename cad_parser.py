@@ -1,10 +1,11 @@
 """
 cad_parser.py - CAD 解析與報表產出模組
-Version: v2.5.4_20260821
+Version: v2.5.7_20260821
 Description: 支援載入 template.xlsm / template.xlsx 範本檔。
              同時計算 OBB 與 AABB，自動採納素材體積較小者。
-             採用 cairosvg 進行高相容性 SVG -> PNG 向量轉譯，
-             解決 renderPMrlPyCairo 後端缺失問題。
+             採用 cairosvg 進行高相容性 SVG -> PNG 向量轉譯。
+             新增 Pillow 自動裁除多餘白邊 (Auto Crop) 與 8% 安全 Margin 演算法，
+             並將 Word 視圖寬度最佳化調整為 4.5 英吋，大幅提升模型可視度與視覺比例。
              包含完整的 UUID 多檔隔離機制、Pillow 圖片有效性驗證與 image_error 診斷回傳。
              獨立匯出 Word 圖文報價單 (.docx)，100% 不干擾 Excel 原有導出邏輯與公式運算。
 """
@@ -96,6 +97,59 @@ def is_valid_image(path: Optional[str]) -> bool:
         return False
 
 
+def auto_crop_cad_image(input_path: str, margin_percent: float = 0.08) -> str:
+    """
+    使用 Pillow 自動偵測 CAD 圖像的邊界並去除多餘白邊/透明邊界。
+    增加 8% 安全 Margin，並保護原始長寬比例。
+    若處理過程遭遇例外，將安全降級回傳原始圖片路徑。
+    """
+    if not is_valid_image(input_path):
+        return input_path
+
+    try:
+        with Image.open(input_path) as img:
+            img_rgba = img.convert("RGBA")
+            width, height = img_rgba.size
+
+            # 建立 Mask 尋找非白底且非完全透明的真實 CAD 圖案區域
+            # Background Threshold: 判定 R, G, B 任一數值 < 240 或 Alpha > 10 為非背景
+            mask = Image.new("L", (width, height), 0)
+            pixels_rgba = img_rgba.load()
+            pixels_mask = mask.load()
+
+            for y in range(height):
+                for x in range(width):
+                    r, g, b, a = pixels_rgba[x, y]
+                    if a > 10 and (r < 240 or g < 240 or b < 240):
+                        pixels_mask[x, y] = 255
+
+            bbox = mask.getbbox()
+            if not bbox:
+                return input_path
+
+            left, upper, right, lower = bbox
+            crop_w = right - left
+            crop_h = lower - upper
+
+            # 計算 8% 安全周圍 Margin
+            margin_x = int(crop_w * margin_percent)
+            margin_y = int(crop_h * margin_percent)
+
+            new_left = max(0, left - margin_x)
+            new_upper = max(0, upper - margin_y)
+            new_right = min(width, right + margin_x)
+            new_lower = min(height, lower + margin_y)
+
+            # 執行高畫質裁切並覆蓋儲存
+            cropped_img = img.crop((new_left, new_upper, new_right, new_lower))
+            cropped_img.save(input_path)
+            return input_path
+
+    except Exception as e_crop:
+        print(f"[CAD CROP WARNING] Auto crop failed, fallback to original: {str(e_crop)}")
+        return input_path
+
+
 def calculate_obb_dimensions(model: cq.Workplane) -> List[float]:
     """
     使用 OpenCASCADE 原生 Bnd_OBB 精確計算 3D 實體的最小素材包容盒 (OBB)
@@ -122,7 +176,7 @@ def calculate_obb_dimensions(model: cq.Workplane) -> List[float]:
 def parse_cad_with_screenshot(file_path: str) -> Dict[str, Any]:
     """
     讀取 CAD 檔案，同時計算 OBB 與 AABB 尺寸，自動採納素材體積較小者。
-    並使用 cairosvg 匯出等角視圖 (1, 1, 1) PNG 圖片，含完整 Exception 捕捉與獨立 UUID 檔名隔離。
+    使用 cairosvg 匯出等角視圖 (1, 1, 1) PNG，並調用 Auto Crop 進行自動去白邊後處理。
     """
     if not os.path.exists(file_path):
         raise FileNotFoundError(f"找不到檔案：{file_path}")
@@ -179,7 +233,7 @@ def parse_cad_with_screenshot(file_path: str) -> Dict[str, Any]:
             "error_message": f"CAD 幾何解析失敗: {str(e)}"
         }
 
-    # 2. 獨立等角視圖截圖流程 (1, 1, 1 視角，採用 cairosvg 引擎，UUID 檔名隔離)
+    # 2. 獨立等角視圖截圖與 Auto Crop 流程 (1, 1, 1 視角，UUID 檔名隔離)
     img_path = None
     image_error = None
     
@@ -197,10 +251,11 @@ def parse_cad_with_screenshot(file_path: str) -> Dict[str, Any]:
 
         if HAS_CAIROSVG:
             # 採用 cairosvg 直接進行 SVG -> PNG 轉譯
-            cairosvg.svg2png(url=svg_path, write_to=png_path, output_width=800, output_height=600)
+            cairosvg.svg2png(url=svg_path, write_to=png_path, output_width=1000, output_height=800)
             
             if is_valid_image(png_path):
-                img_path = png_path
+                # 執行去白邊 Post-processing 後處理
+                img_path = auto_crop_cad_image(png_path, margin_percent=0.08)
             else:
                 raise ValueError("cairosvg 產出之 PNG 檔無效或為 0-byte。")
         else:
@@ -364,7 +419,7 @@ def generate_word_report(
     header_info: Optional[Dict[str, Any]] = None
 ):
     """
-    建立 Word 圖文報價單 (.docx)，含圖片驗證與錯誤提示回顯。
+    建立 Word 圖文報價單 (.docx)，將圖片置中且顯著放大至 Inches(4.5)，完美呈現去白邊後的 CAD 視圖。
     """
     if not HAS_DOCX:
         raise ModuleNotFoundError("系統缺少 python-docx 套件，無法產生 Word 報表。")
@@ -457,13 +512,14 @@ def generate_word_report(
         r_d2 = p_desc.add_run(f"• 尺寸拆解數值：長 {length} {unit} / 寬 {width} {unit} / 高 {height} {unit}\n")
         r_d2.font.name = '標楷體'
 
-        # 插入 CAD 等角視圖截圖 (含驗證與錯誤原因說明)
+        # 插入 CAD 等角視圖截圖 (置中且指定寬度 Inches(4.5))
         if is_valid_image(img_path):
             try:
                 p_img = doc.add_paragraph()
                 p_img.alignment = WD_ALIGN_PARAGRAPH.CENTER
                 run_img = p_img.add_run()
-                run_img.add_picture(img_path, width=Inches(3.8))
+                # 最佳化寬度 Inches(4.5)，由 python-docx 自動鎖定等比高度
+                run_img.add_picture(img_path, width=Inches(4.5))
             except Exception as e_word_img:
                 p_err = doc.add_paragraph(f"   [ 無法產生等角視圖預覽 (Word插入例外: {str(e_word_img)}) ]")
                 p_err.runs[0].font.color.rgb = RGBColor(128, 128, 128)
