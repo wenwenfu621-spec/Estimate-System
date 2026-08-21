@@ -1,15 +1,16 @@
 """
 cad_parser.py - CAD 解析與報表產出模組
-Version: v2.5.2_20260821
+Version: v2.5.3_20260821
 Description: 支援載入 template.xlsm / template.xlsx 範本檔。
              同時計算 OBB 與 AABB，自動採納素材體積較小者。
-             支援導出等角視圖 (1,1,1) 之 SVG，並透過 svglib/reportlab 純 Python 引擎
-             高畫質轉譯為 PNG 圖片，完美插入 Word 圖文報價單 (.docx)。
-             100% 不干擾 Excel 原有導出邏輯與公式運算。
+             支援導出等角視圖 (1,1,1) 之 SVG 與安全 PNG 轉譯。
+             包含完整的 UUID 多檔隔離機制、Pillow 圖片有效性驗證與 image_error 診斷回傳。
+             獨立匯出 Word 圖文報價單 (.docx)，100% 不干擾 Excel 原有導出邏輯與公式運算。
 """
 
 import os
 import math
+import uuid
 import tempfile
 from datetime import datetime
 from typing import Dict, Any, List, Optional
@@ -79,6 +80,22 @@ def set_cell_value_safe(ws, row: int, col: int, value: Any, font: Optional[Font]
         pass
 
 
+def is_valid_image(path: Optional[str]) -> bool:
+    """
+    驗證圖片檔是否存在、大小大於 0、且可被 Pillow 正確讀取
+    """
+    if not path or not os.path.exists(path):
+        return False
+    if os.path.getsize(path) <= 0:
+        return False
+    try:
+        with Image.open(path) as img:
+            img.verify()
+        return True
+    except Exception:
+        return False
+
+
 def calculate_obb_dimensions(model: cq.Workplane) -> List[float]:
     """
     使用 OpenCASCADE 原生 Bnd_OBB 精確計算 3D 實體的最小素材包容盒 (OBB)
@@ -105,7 +122,7 @@ def calculate_obb_dimensions(model: cq.Workplane) -> List[float]:
 def parse_cad_with_screenshot(file_path: str) -> Dict[str, Any]:
     """
     讀取 CAD 檔案，同時計算 OBB 與 AABB 尺寸，自動採納素材體積較小者。
-    並使用 svglib 引擎將等角視圖 (1, 1, 1) SVG 轉譯為 PNG 圖檔。
+    並嘗試匯出等角視圖 (1, 1, 1) PNG 圖片，含完整 Exception 捕捉與獨立 UUID 檔名隔離。
     """
     if not os.path.exists(file_path):
         raise FileNotFoundError(f"找不到檔案：{file_path}")
@@ -162,33 +179,45 @@ def parse_cad_with_screenshot(file_path: str) -> Dict[str, Any]:
             "error_message": f"CAD 幾何解析失敗: {str(e)}"
         }
 
-    # 2. 獨立等角視圖截圖流程 (1, 1, 1 視角，採用 svglib 轉譯引擎)
+    # 2. 獨立等角視圖截圖流程 (1, 1, 1 視角，UUID 檔名隔離，捕捉完整 image_error)
     img_path = None
+    image_error = None
+    
+    unique_id = str(uuid.uuid4())[:8]
+    temp_dir = tempfile.gettempdir()
+    svg_path = os.path.join(temp_dir, f"cad_iso_{unique_id}.svg")
+    png_path = os.path.join(temp_dir, f"cad_iso_{unique_id}.png")
+
     try:
-        svg_tmp = tempfile.NamedTemporaryFile(delete=False, suffix='.svg')
-        svg_path = svg_tmp.name
-        svg_tmp.close()
-
-        img_tmp = tempfile.NamedTemporaryFile(delete=False, suffix='.png')
-        img_path_candidate = img_tmp.name
-        img_tmp.close()
-
         # 匯出等角視圖 SVG (projectionDir=(1,1,1))
         cq.exporters.export(model, svg_path, opt={"projectionDir": (1, 1, 1), "showHidden": False})
 
+        if not os.path.exists(svg_path) or os.path.getsize(svg_path) <= 0:
+            raise FileNotFoundError("CadQuery 未能成功產出有效 SVG 檔案。")
+
         if HAS_SVGLIB:
-            # 採用純 Python 的 svglib + reportlab 繪製 PNG，避開底層 C 庫依賴
             drawing = svg2rlg(svg_path)
             if drawing:
-                renderPM.drawToFile(drawing, img_path_candidate, fmt="PNG")
-                img_path = img_path_candidate
+                renderPM.drawToFile(drawing, png_path, fmt="PNG")
+                if is_valid_image(png_path):
+                    img_path = png_path
+                else:
+                    raise ValueError("svglib 產出之 PNG 檔無效或為 0-byte。")
+            else:
+                raise ValueError("svglib 無法解析此 SVG 向量路徑。")
         else:
-            img_path = None
+            raise ModuleNotFoundError("環境缺少 svglib/reportlab 轉譯套件。")
 
-        if os.path.exists(svg_path):
-            os.remove(svg_path)
-    except Exception:
+    except Exception as e_img:
+        image_error = f"{type(e_img).__name__}: {str(e_img)}"
+        print(f"[CAD IMAGE ERROR] {os.path.basename(file_path)}: {image_error}")
         img_path = None
+    finally:
+        if os.path.exists(svg_path):
+            try:
+                os.remove(svg_path)
+            except Exception:
+                pass
 
     return {
         "status": "success",
@@ -199,7 +228,8 @@ def parse_cad_with_screenshot(file_path: str) -> Dict[str, Any]:
         "height": height_val,
         "unit": "mm",
         "used_mode": used_mode,
-        "image_path": img_path
+        "image_path": img_path,
+        "image_error": image_error
     }
 
 
@@ -336,7 +366,7 @@ def generate_word_report(
     header_info: Optional[Dict[str, Any]] = None
 ):
     """
-    全新獨立模組：建立 Word 圖文報價單 (.docx)，排版包含客戶表頭、CAD 尺寸數據與等角視圖 PNG 縮圖。
+    建立 Word 圖文報價單 (.docx)，含圖片驗證與錯誤提示回顯。
     """
     if not HAS_DOCX:
         raise ModuleNotFoundError("系統缺少 python-docx 套件，無法產生 Word 報表。")
@@ -409,6 +439,7 @@ def generate_word_report(
         height = item.get("height", 0)
         unit = item.get("unit", "mm")
         img_path = item.get("image_path")
+        img_err = item.get("image_error")
 
         # 項目分隔線與標題
         p_item = doc.add_paragraph()
@@ -428,18 +459,19 @@ def generate_word_report(
         r_d2 = p_desc.add_run(f"• 尺寸拆解數值：長 {length} {unit} / 寬 {width} {unit} / 高 {height} {unit}\n")
         r_d2.font.name = '標楷體'
 
-        # 插入 CAD 等角視圖截圖 (安全防禦)
-        if img_path and os.path.exists(img_path):
+        # 插入 CAD 等角視圖截圖 (含驗證與錯誤原因說明)
+        if is_valid_image(img_path):
             try:
                 p_img = doc.add_paragraph()
                 p_img.alignment = WD_ALIGN_PARAGRAPH.CENTER
                 run_img = p_img.add_run()
                 run_img.add_picture(img_path, width=Inches(3.8))
-            except Exception:
-                p_err = doc.add_paragraph("   [ CAD 等角視圖預覽載入失敗 ]")
+            except Exception as e_word_img:
+                p_err = doc.add_paragraph(f"   [ 無法產生等角視圖預覽 (Word插入例外: {str(e_word_img)}) ]")
                 p_err.runs[0].font.color.rgb = RGBColor(128, 128, 128)
         else:
-            p_none = doc.add_paragraph("   [ 無法產生等角視圖預覽 ]")
+            err_msg = f" ({img_err})" if img_err else ""
+            p_none = doc.add_paragraph(f"   [ 無法產生等角視圖預覽{err_msg} ]")
             p_none.runs[0].font.color.rgb = RGBColor(128, 128, 128)
 
         doc.add_paragraph().paragraph_format.space_after = Pt(6)
