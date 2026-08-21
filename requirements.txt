@@ -1,7 +1,7 @@
+# requirements.txt - Version: v2.5.1_20260821
 streamlit
-cadquery-ocp==7.7.0.0
-cadquery==2.4.0
+cadquery
 openpyxl
 Pillow
 python-docx
-cairosvg
+numpy
