@@ -1,7 +1,9 @@
-# requirements.txt - Version: v2.5.1_20260821
+# requirements.txt - Version: v2.5.2_20260821
 streamlit
 cadquery
 openpyxl
 Pillow
 python-docx
+svglib
+reportlab
 numpy
