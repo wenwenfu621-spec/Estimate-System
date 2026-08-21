@@ -1,7 +1,8 @@
 """
 app.py - Streamlit 系統首頁 (Landing Page)
 Version: v2.8.3_20260821
-Description: 提供 3D CAD 與 2D Mylar 雙軌功能獨立入口，採用純 ASCII 檔名導航。
+Description: 提供 3D CAD 與 2D Mylar 雙軌功能獨立入口。
+             修正：switch_page 路徑已對齊 GitHub 真實檔名。
 """
 
 import streamlit as st
@@ -74,6 +75,7 @@ with col1:
     </div>
     """, unsafe_allow_html=True)
     if st.button("進入 3D CAD 辨識", width="stretch", type="primary"):
+        # 確保此處與 GitHub 上的 1_3D_CAD.py 大小寫完全一致
         st.switch_page("pages/1_3D_CAD.py")
 
 with col2:
@@ -86,4 +88,5 @@ with col2:
     </div>
     """, unsafe_allow_html=True)
     if st.button("進入 2D Mylar 辨識", width="stretch", type="primary"):
-        st.switch_page("pages/2_2D_Mylar.py")
+        # ⚠️ 這裡修改為與您截圖中完全一致的檔名：2_2D_MYLAR.py (全大寫)
+        st.switch_page("pages/2_2D_MYLAR.py")
