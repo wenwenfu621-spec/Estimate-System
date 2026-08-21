@@ -1,8 +1,8 @@
 """
-pages/2_📄_2D_Mylar_Analysis.py - 2D Mylar / DXF 材料辨識專屬頁面
-Version: v2.8.0_20260821
+pages/2_2D_Mylar.py - 2D Mylar / DXF 材料辨識專屬頁面
+Version: v2.8.1_20260821
 Description: 專責 DXF 上傳、Mylar 厚度與材質設定、2D 輪廓解析與預覽。
-             使用獨立的 2D Session State 與專屬 Reset 邏輯。
+             使用獨立的 2D Session State、專屬 Reset 邏輯與返回首頁導航。
 """
 
 import streamlit as st
@@ -33,8 +33,12 @@ def reset_2d_session():
 
 
 st.set_page_config(page_title="2D Mylar 材料辨識", page_icon="📄", layout="centered")
+
+if st.button("← 返回功能首頁"):
+    st.switch_page("app.py")
+
 st.title("📄 2D Mylar / 模切材料辨識")
-st.write("上傳 `.dxf` 2D 模切圖檔（DWG 請先另存為 DXF），設定材料厚度與類型以計算外形尺寸與面積。")
+st.write("上傳 `.dxf` 2D 模切圖檔，設定材料厚度與類型以計算外形尺寸與面積。")
 
 if "uploader_2d_key" not in st.session_state:
     st.session_state.uploader_2d_key = 0
@@ -102,7 +106,7 @@ if uploaded_2d_files:
             if res.get("image_path"):
                 st.session_state.temp_files_2d.append(res["image_path"])
 
-            progress_bar.progress((idx + 1) / len(uploaded_2d_files))
+            progress_bar.progress((idx + 1) / len(uploaded_files))
 
         status_text.success("🎉 2D DXF 檔案全部辨識完成！")
 
