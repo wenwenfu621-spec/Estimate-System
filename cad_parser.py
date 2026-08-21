@@ -1,11 +1,9 @@
 """
-cad_parser.py - CAD 解析與報表產出模組
-Version: v2.6.1_20260821
-Description: 升級工程三視圖與 ISO 預覽圖卡組版：
-             - 實作 Common Scale Factor (共同比例) 與 Projection Alignment (第三角法對齊)。
-             - 智慧 Auto Crop 排除白邊與異常延伸線。
-             - 升級 generate_word_report 支援 keep_with_next 防跨頁保護 (Atomic Block)。
-             - 100% 保留既有 OBB/AABB 幾何解析與 Excel 報價單邏輯。
+cad_parser.py - 3D CAD 解析與報表產出模組
+Version: v2.7.0_20260821
+Description: 專責 3D STEP/IGES 管道，與 2D DXF 管道完全分離。
+             包含 OBB/AABB 最小包容盒計算、第三角法工程三視圖組合圖卡生成，
+             以及 Word 專屬 keep_with_next 原子區塊防跨頁保護。
 """
 
 import os
@@ -112,7 +110,7 @@ def render_single_view(
     out_w: int = 800, 
     out_h: int = 800
 ) -> bool:
-    """將模型以指定的投影方向導出為 SVG，並使用 cairosvg 轉為指定大小之 PNG"""
+    """將 3D 模型以指定的投影方向導出為 SVG，並使用 cairosvg 轉為指定大小之 PNG"""
     temp_dir = tempfile.gettempdir()
     unique_id = str(uuid.uuid4())[:8]
     svg_path = os.path.join(temp_dir, f"view_{unique_id}.svg")
@@ -151,7 +149,6 @@ def auto_crop_image_to_bbox(input_path: str, margin_px: int = 12) -> Optional[Im
             for y in range(h):
                 for x in range(w):
                     r, g, b, a = pixels_rgba[x, y]
-                    # 濾除白底與透明底，保留實際線條
                     if a > 10 and (r < 240 or g < 240 or b < 240):
                         pixels_mask[x, y] = 255
 
@@ -178,9 +175,8 @@ def generate_engineering_4views_card(model: cq.Workplane, final_png_path: str) -
     y_len = max(0.1, bbox_3d.ylen)
     z_len = max(0.1, bbox_3d.zlen)
 
-    # 1. 統一計算全域 Scale Ratio (確保三視圖 1:1:1 共同比例)
     max_span = max(x_len, y_len, z_len)
-    cell_draw_area = 580.0  # 放大內部區塊渲染尺寸以提升清晰度
+    cell_draw_area = 580.0
     scale_ratio = cell_draw_area / max_span
     
     top_w = max(50, int(x_len * scale_ratio))
@@ -216,38 +212,32 @@ def generate_engineering_4views_card(model: cq.Workplane, final_png_path: str) -
         if not (img_top and img_front and img_right and img_iso):
             return False
 
-        # 2. 建立 1600x1200 高畫質畫布
         canvas_w, canvas_h = 1600, 1200
         canvas = Image.new("RGBA", (canvas_w, canvas_h), (255, 255, 255, 255))
 
         cx_left, cx_right = 420, 1180
         cy_top, cy_bottom = 300, 900
 
-        # A. 放置 FRONT View (左下錨點)
         fw, fh = img_front.size
         front_x = cx_left - (fw // 2)
         front_y = cy_bottom - (fh // 2)
         canvas.paste(img_front, (front_x, front_y), img_front)
 
-        # B. 放置 TOP View (左上，X 軸水平對齊)
         tw, th = img_top.size
         top_x = front_x + (fw // 2) - (tw // 2)
         top_y = cy_top - (th // 2)
         canvas.paste(img_top, (top_x, top_y), img_top)
 
-        # C. 放置 RIGHT View (右下，Y 軸垂直對齊)
         rw, rh = img_right.size
         right_x = cx_right - (rw // 2)
         right_y = front_y + (fh // 2) - (rh // 2)
         canvas.paste(img_right, (right_x, right_y), img_right)
 
-        # D. 放置 ISO View (右上，獨立視覺參考)
         iw, ih = img_iso.size
         iso_x = cx_right - (iw // 2)
         iso_y = cy_top - (ih // 2)
         canvas.paste(img_iso, (iso_x, iso_y), img_iso)
 
-        # 3. 繪製工程圖標籤與標準註記
         draw = ImageDraw.Draw(canvas)
         try:
             font = ImageFont.truetype("DejaVuSans.ttf", 22)
@@ -263,7 +253,6 @@ def generate_engineering_4views_card(model: cq.Workplane, final_png_path: str) -
         draw.text((cx_right - 65, cy_bottom + 240), "右視圖 RIGHT", fill=(60, 60, 60, 255), font=font)
         draw.text((cx_right - 80, cy_top + 240), "等角圖 ISOMETRIC", fill=(60, 60, 60, 255), font=font)
 
-        # 輕量十字格線輔助
         draw.line([(800, 80), (800, 1120)], fill=(230, 230, 230, 255), width=2)
         draw.line([(80, 600), (1520, 600)], fill=(230, 230, 230, 255), width=2)
 
@@ -283,7 +272,7 @@ def generate_engineering_4views_card(model: cq.Workplane, final_png_path: str) -
 
 
 def parse_cad_with_screenshot(file_path: str) -> Dict[str, Any]:
-    """讀取 CAD 檔案，進行 OBB/AABB 比對並產出工程三視圖圖卡"""
+    """讀取 3D CAD 檔案，進行 OBB/AABB 比對並產出工程三視圖圖卡"""
     if not os.path.exists(file_path):
         raise FileNotFoundError(f"找不到檔案：{file_path}")
 
@@ -330,6 +319,7 @@ def parse_cad_with_screenshot(file_path: str) -> Dict[str, Any]:
     except Exception as e:
         return {
             "status": "error",
+            "file_type": "3D",
             "file_name": os.path.basename(file_path),
             "error_message": f"CAD 幾何解析失敗: {str(e)}"
         }
@@ -353,6 +343,7 @@ def parse_cad_with_screenshot(file_path: str) -> Dict[str, Any]:
 
     return {
         "status": "success",
+        "file_type": "3D",
         "file_name": os.path.basename(file_path),
         "dimensions_str": dimensions_str,
         "length": length_val,
@@ -370,7 +361,7 @@ def generate_excel_report(
     output_excel_path: str,
     header_info: Optional[Dict[str, Any]] = None
 ):
-    """Excel 報表匯出（標楷體與公式計算維持不變）"""
+    """Excel 報表匯出（支援 3D 與 2D 混合項目，標楷體與公式計算）"""
     template_candidates = ["template.xlsm", "template.xlsx", "Template.xlsm", "Template.xlsx"]
     template_file = next((tf for tf in template_candidates if os.path.exists(tf)), None)
     is_xlsm = template_file and template_file.lower().endswith('.xlsm')
@@ -415,6 +406,8 @@ def generate_excel_report(
             ws.cell(row=row_num, column=18, value=item["width"]).font = kai_font_bold
         if "height" in item:
             ws.cell(row=row_num, column=19, value=item["height"]).font = kai_font_bold
+        elif "thickness" in item and item["thickness"]:
+            ws.cell(row=row_num, column=19, value=item["thickness"]).font = kai_font_bold
             
         ws.cell(row=row_num, column=20, value=item.get("unit", "mm")).font = kai_font_regular
 
@@ -446,7 +439,8 @@ def generate_word_report(
     header_info: Optional[Dict[str, Any]] = None
 ):
     """
-    建立 Word 圖文報價單 (.docx)，實作 keep_with_next 防跨頁保護 (Atomic CAD Block)。
+    建立 Word 圖文報價單 (.docx)，實作 keep_with_next 原子區塊防跨頁保護 (Atomic CAD Block)。
+    支援 3D 機構件與 2D Mylar 模切材料雙軌報表產出。
     """
     if not HAS_DOCX:
         raise ModuleNotFoundError("系統缺少 python-docx 套件，無法產生 Word 報表。")
@@ -461,7 +455,7 @@ def generate_word_report(
 
     title_p = doc.add_paragraph()
     title_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    title_run = title_p.add_run("⚙️ CAD 零件報價與工程三視圖明細單")
+    title_run = title_p.add_run("⚙️ CAD 與 2D 模切材料報價明細單")
     title_run.font.size = Pt(20)
     title_run.font.bold = True
     title_run.font.name = '標楷體'
@@ -508,51 +502,65 @@ def generate_word_report(
 
         file_name = item.get("file_name", "")
         dims_str = item.get("dimensions_str", "")
-        used_mode = item.get("used_mode", "OBB")
-        length = item.get("length", 0)
-        width = item.get("width", 0)
-        height = item.get("height", 0)
-        unit = item.get("unit", "mm")
+        ftype = item.get("file_type", "3D")
         img_path = item.get("image_path")
         img_err = item.get("image_error")
 
-        # 項目標題段落 (設定 keep_with_next=True 確保與下方尺寸黏結)
+        # 項目標題段落 (keep_with_next=True 確保與下方尺寸黏結)
         p_item = doc.add_paragraph()
         p_item.paragraph_format.keep_with_next = True
-        r_item = p_item.add_run(f"【項目 {idx+1}】 檔名：{file_name}")
+        r_item = p_item.add_run(f"【項目 {idx+1}】 檔名：{file_name} ({'2D 模切' if ftype == '2D' else '3D 機構件'})")
         r_item.font.bold = True
         r_item.font.size = Pt(12)
         r_item.font.name = '標楷體'
 
-        # 尺寸詳細數據段落 (設定 keep_with_next=True 確保與下方圖片黏結)
+        # 尺寸詳細數據段落 (keep_with_next=True 確保與下方圖片黏結)
         p_desc = doc.add_paragraph()
         p_desc.paragraph_format.left_indent = Inches(0.2)
         p_desc.paragraph_format.keep_with_next = True
         
-        r_d1 = p_desc.add_run(f"• 採納素材尺寸 (長*寬*高)：{dims_str} {unit} ({used_mode} 模式)\n")
-        r_d1.font.bold = True
-        r_d1.font.name = '標楷體'
-        
-        r_d2 = p_desc.add_run(f"• 尺寸拆解數值：長 {length} {unit} / 寬 {width} {unit} / 高 {height} {unit}\n")
-        r_d2.font.name = '標楷體'
+        if ftype == '2D':
+            mat_type = item.get("material_type", "Mylar")
+            gross_area = item.get("gross_area", "待確認")
+            net_area = item.get("net_area", "待確認")
+            thickness = item.get("thickness", "待確認")
+            
+            r_d1 = p_desc.add_run(f"• 材料類型：{mat_type} (厚度: {thickness} mm)\n")
+            r_d1.font.bold = True
+            r_d1.font.name = '標楷體'
+            
+            r_d2 = p_desc.add_run(f"• 外形尺寸 (長×寬×厚)：{dims_str} mm\n• 外形總面積 (Gross Area)：{gross_area} mm²\n• 淨材料面積 (Net Area)：{net_area}\n")
+            r_d2.font.name = '標楷體'
+        else:
+            used_mode = item.get("used_mode", "OBB")
+            length = item.get("length", 0)
+            width = item.get("width", 0)
+            height = item.get("height", 0)
+            unit = item.get("unit", "mm")
+            
+            r_d1 = p_desc.add_run(f"• 採納素材尺寸 (長*寬*高)：{dims_str} {unit} ({used_mode} 模式)\n")
+            r_d1.font.bold = True
+            r_d1.font.name = '標楷體'
+            
+            r_d2 = p_desc.add_run(f"• 尺寸拆解數值：長 {length} {unit} / 寬 {width} {unit} / 高 {height} {unit}\n")
+            r_d2.font.name = '標楷體'
 
-        # 插入工程三視圖圖卡 (設定寬度 5.8 吋，置中)
+        # 插入預覽圖卡 (寬度 5.8 吋，置中)
         if is_valid_image(img_path):
             try:
                 p_img = doc.add_paragraph()
                 p_img.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                # 若不是最後一個項目，圖片也設定 keep_with_next 保持區塊原子性
                 if idx < len(parsed_results) - 1:
                     p_img.paragraph_format.keep_with_next = True
                     
                 run_img = p_img.add_run()
                 run_img.add_picture(img_path, width=Inches(5.8))
             except Exception as e_word_img:
-                p_err = doc.add_paragraph(f"   [ 無法產生工程視圖預覽 (Word插入例外: {str(e_word_img)}) ]")
+                p_err = doc.add_paragraph(f"   [ 無法產生視圖預覽 (Word插入例外: {str(e_word_img)}) ]")
                 p_err.runs[0].font.color.rgb = RGBColor(128, 128, 128)
         else:
             err_msg = f" ({img_err})" if img_err else ""
-            p_none = doc.add_paragraph(f"   [ 無法產生工程視圖預覽{err_msg} ]")
+            p_none = doc.add_paragraph(f"   [ 無法產生視圖預覽{err_msg} ]")
             p_none.runs[0].font.color.rgb = RGBColor(128, 128, 128)
 
         doc.add_paragraph().paragraph_format.space_after = Pt(8)
