@@ -1,7 +1,2 @@
-libgl1-mesa-glx
-libglu1-mesa
-libgomp1
-libsm6
-libxext6
-libxrender-dev
-xvfb
+libcairo2
+libcairo2-dev
