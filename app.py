@@ -1,10 +1,12 @@
 """
 app.py - Streamlit 網頁介面程式
-Version: v2.4.0_20260821
+Version: v2.5.0_20260821
 Description: 提供 CAD 報價辨識工具。
              自動同步計算 OBB/AABB 並取小值採納，
-             完全對齊對照圖，展示「加工素材計算採用下列兩種方式之最小值」圖文說明區塊，
+             展示「加工素材計算採用下列兩種方式之最小值」圖文說明區塊，
              視窗預覽標註尺寸來源模式 (OBB 或 AABB)，
+             全新支援獨立生成與下載 Word 圖文報價單 (.docx) 含等角視圖截圖，
+             與 Excel 匯出功能雙向獨立、零干擾。
              Markdown 顯示轉義星號 (\\.replace("*", "\\*")) 解決 62209 顯示錯誤，
              採用方案 1 原生輸入框帶 Tab 切換提示，
              一鍵重置 Widget Key，頁尾含個人頭像徽章 (Design by Max)。
@@ -15,7 +17,7 @@ import os
 import tempfile
 import base64
 from datetime import datetime
-from cad_parser import parse_cad_with_screenshot, generate_excel_report
+from cad_parser import parse_cad_with_screenshot, generate_excel_report, generate_word_report
 
 
 def inject_custom_elements():
@@ -92,7 +94,7 @@ def inject_custom_elements():
     }}
     </style>
     
-    <div class="version-badge-left">Version: v2.4.0_20260821</div>
+    <div class="version-badge-left">Version: v2.5.0_20260821</div>
     
     <div class="custom-footer-max">
         {avatar_html}
@@ -119,20 +121,21 @@ def reset_session():
     cleanup_temp_files()
     st.session_state.parsed_results = None
     st.session_state.excel_bytes = None
+    st.session_state.word_bytes = None
     st.session_state.export_ext = ".xlsx"
     st.session_state.mime_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     
     st.session_state.uploader_key_num += 1
 
 
-st.set_page_config(page_title="CAD 報價辨識工具 (v2.4.0)", page_icon="⚙️", layout="centered")
+st.set_page_config(page_title="CAD 報價辨識工具 (v2.5.0)", page_icon="⚙️", layout="centered")
 
 # 載入懸浮元件
 inject_custom_elements()
 
 # 標題採用 HTML + white-space: nowrap 鎖定排版，徹底防止齒輪與文字折行堆疊
 st.markdown("<h1 style='text-align: center; white-space: nowrap;'>⚙️ CAD 自動報價與尺寸辨識工具 ⚙️</h1>", unsafe_allow_html=True)
-st.write("上傳 `.step` 或 `.igs` 3D 模型檔，點選下方按鈕自動辨識尺寸並套寫至 Excel 報價單。")
+st.write("上傳 `.step` 或 `.igs` 3D 模型檔，點選下方按鈕自動辨識尺寸並套寫至 Excel 與 Word 報價單。")
 
 if "uploader_key_num" not in st.session_state:
     st.session_state.uploader_key_num = 0
@@ -140,6 +143,8 @@ if "parsed_results" not in st.session_state:
     st.session_state.parsed_results = None
 if "excel_bytes" not in st.session_state:
     st.session_state.excel_bytes = None
+if "word_bytes" not in st.session_state:
+    st.session_state.word_bytes = None
 if "export_ext" not in st.session_state:
     st.session_state.export_ext = ".xlsx"
 if "mime_type" not in st.session_state:
@@ -160,7 +165,6 @@ with st.expander("📝 客戶與報價表頭資訊填寫 (選填，可直接留�
 
 # 修改說明標題：加工素材計算採用下列兩種方式之最小值
 with st.expander("📐 加工素材計算採用下列兩種方式之最小值", expanded=True):
-    # 去數值 (取消 4mm/9mm 文字) 僅保留箭頭之兩大 SVG 示意卡片
     svg_obb = """
     <svg width="200" height="110" viewBox="0 0 200 110" xmlns="http://www.w3.org/2000/svg">
         <rect width="200" height="110" rx="6" fill="#f8fafc"/>
@@ -246,6 +250,14 @@ if uploaded_files:
 
         status_text.success("🎉 所有檔案辨識完成！已自動套用範本檔填入數據。")
 
+        header_info = {
+            "customer": customer_input,
+            "contact": contact_input,
+            "phone": phone_input,
+            "fax": fax_input
+        }
+
+        # 1. 產生 Excel 報表
         has_xlsm_template = os.path.exists("template.xlsm") or os.path.exists("Template.xlsm")
         export_ext = ".xlsm" if has_xlsm_template else ".xlsx"
         mime_type = "application/vnd.ms-excel.sheet.macroEnabled.12" if has_xlsm_template else "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
@@ -255,20 +267,29 @@ if uploaded_files:
         excel_tmp.close()
         st.session_state.temp_files_list.append(excel_path)
 
-        header_info = {
-            "customer": customer_input,
-            "contact": contact_input,
-            "phone": phone_input,
-            "fax": fax_input
-        }
-
         generate_excel_report(parsed_results, excel_path, header_info=header_info)
 
         with open(excel_path, "rb") as f:
             excel_bytes = f.read()
 
+        # 2. 產生 Word 圖文報表 (含等角視圖縮圖)
+        word_bytes = None
+        try:
+            word_tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".docx")
+            word_path = word_tmp.name
+            word_tmp.close()
+            st.session_state.temp_files_list.append(word_path)
+
+            generate_word_report(parsed_results, word_path, header_info=header_info)
+
+            with open(word_path, "rb") as f_w:
+                word_bytes = f_w.read()
+        except Exception as e_word:
+            st.warning(f"⚠️ Word 報表產生警告：{str(e_word)}")
+
         st.session_state.parsed_results = parsed_results
         st.session_state.excel_bytes = excel_bytes
+        st.session_state.word_bytes = word_bytes
         st.session_state.export_ext = export_ext
         st.session_state.mime_type = mime_type
 
@@ -281,29 +302,50 @@ if st.session_state.parsed_results:
             used_mode = res.get("used_mode", "OBB")
             
             with st.expander(f"📄 {res['file_name']} - 【尺寸：{display_dims_escaped} mm ({used_mode})】"):
-                st.write(f"**品名 (檔名)**：{res['file_name']}")
-                st.write(f"**尺寸 (長\\*寬\\*高，無條件進位)**：{display_dims_escaped} mm ({used_mode})")
-                st.write(f"**採納演算法**：{used_mode} 模式 (體積較小者)")
-                st.write(f"**拆解數值**：長 {res.get('length')} / 寬 {res.get('width')} / 高 {res.get('height')}")
-                st.write(f"**單位**：{res['unit']}")
+                col_p1, col_p2 = st.columns([3, 2])
+                with col_p1:
+                    st.write(f"**品名 (檔名)**：{res['file_name']}")
+                    st.write(f"**尺寸 (長\\*寬\\*高，無條件進位)**：{display_dims_escaped} mm ({used_mode})")
+                    st.write(f"**採納演算法**：{used_mode} 模式 (體積較小者)")
+                    st.write(f"**拆解數值**：長 {res.get('length')} / 寬 {res.get('width')} / 高 {res.get('height')}")
+                    st.write(f"**單位**：{res['unit']}")
+                with col_p2:
+                    if res.get("image_path") and os.path.exists(res["image_path"]):
+                        st.image(res["image_path"], caption="CAD 等角視圖預覽", use_column_width=True)
+
         else:
             st.error(f"❌ {res['file_name']} 解析失敗：{res.get('error_message')}")
 
     st.markdown("---")
-    col_dl, col_rst = st.columns([2, 1])
+    
+    # 雙下載按鈕區域與重置按鈕
+    col_dl1, col_dl2, col_rst = st.columns([2, 2, 1])
     
     today_date_str = datetime.now().strftime("%Y%m%d")
-    download_filename = f"CAD_Quotation_Report_{today_date_str}{st.session_state.export_ext}"
+    download_excel_name = f"CAD_Quotation_Report_{today_date_str}{st.session_state.export_ext}"
+    download_word_name = f"CAD_Quotation_Report_{today_date_str}.docx"
     
-    with col_dl:
+    with col_dl1:
         st.download_button(
-            label=f"📊 下載完整 CAD 報價單 Excel 檔 ({st.session_state.export_ext})",
+            label=f"📊 下載 Excel 報價單 ({st.session_state.export_ext})",
             data=st.session_state.excel_bytes,
-            file_name=download_filename,
+            file_name=download_excel_name,
             mime=st.session_state.mime_type,
             use_container_width=True
         )
+
+    with col_dl2:
+        if st.session_state.word_bytes:
+            st.download_button(
+                label="📝 下載 CAD 圖文報價單 (.docx)",
+                data=st.session_state.word_bytes,
+                file_name=download_word_name,
+                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                use_container_width=True
+            )
+        else:
+            st.button("📝 Word 報表不可用", disabled=True, use_container_width=True)
         
     with col_rst:
-        if st.button("🔄 重置 / 準備下一批報價", on_click=reset_session, use_container_width=True):
+        if st.button("🔄 重置 / 準備下一批", on_click=reset_session, use_container_width=True):
             st.rerun()
