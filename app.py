@@ -1,7 +1,7 @@
 """
 app.py - Streamlit 系統首頁 (Landing Page)
-Version: v2.8.0_20260821
-Description: 提供 3D CAD 與 2D Mylar 雙軌功能入口，引導使用者進入對應的獨立頁面。
+Version: v2.8.1_20260821
+Description: 提供 3D CAD 與 2D Mylar 雙軌功能獨立入口，採用純 ASCII 檔名導航。
 """
 
 import streamlit as st
@@ -45,9 +45,10 @@ def inject_custom_elements():
     .landing-card {{
         background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px;
         padding: 24px; text-align: center; margin-bottom: 16px; box-shadow: 0px 2px 4px rgba(0,0,0,0.05);
+        height: 220px; display: flex; flex-direction: column; justify-content: space-between;
     }}
     </style>
-    <div class="version-badge-left">Version: v2.8.0_20260821</div>
+    <div class="version-badge-left">Version: v2.8.1_20260821</div>
     <div class="custom-footer-max">{avatar_html}<span class="custom-footer-text">Design by Max</span></div>
     """
     st.markdown(custom_css, unsafe_allow_html=True)
@@ -66,19 +67,23 @@ col1, col2 = st.columns(2, gap="medium")
 with col1:
     st.markdown("""
     <div class="landing-card">
-        <h3>📦 3D 機構件尺寸辨識</h3>
-        <p style="color: #64748b; font-size: 0.9rem;">適用 STEP / STP / IGES / IGS<br>具備 OBB/AABB 最小包容盒、第三角法三視圖與 Excel/Word 報價匯出。</p>
+        <div>
+            <h3>📦 3D 機構件尺寸辨識</h3>
+            <p style="color: #64748b; font-size: 0.85rem;">適用 STEP / STP / IGES / IGS<br>具備 OBB/AABB 最小包容盒、工程三視圖與 Excel/Word 報價匯出。</p>
+        </div>
     </div>
     """, unsafe_allow_html=True)
     if st.button("進入 3D CAD 辨識", width="stretch", type="primary"):
-        st.switch_page("pages/1_📦_3D_CAD_Analysis.py")
+        st.switch_page("pages/1_3D_CAD.py")
 
 with col2:
     st.markdown("""
     <div class="landing-card">
-        <h3>📄 2D Mylar 材料辨識</h3>
-        <p style="color: #64748b; font-size: 0.9rem;">適用 DXF 2D 模切檔案<br>具備外形輪廓尺寸、材料厚度設定、面積計算與 2D 預覽。</p>
+        <div>
+            <h3>📄 2D Mylar 材料辨識</h3>
+            <p style="color: #64748b; font-size: 0.85rem;">適用 DXF 2D 模切檔案<br>具備外形輪廓尺寸、材料厚度設定、面積計算與 2D 預覽。</p>
+        </div>
     </div>
     """, unsafe_allow_html=True)
     if st.button("進入 2D Mylar 辨識", width="stretch", type="primary"):
-        st.switch_page("pages/2_📄_2D_Mylar_Analysis.py")
+        st.switch_page("pages/2_2D_Mylar.py")
