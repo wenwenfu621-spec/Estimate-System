@@ -1,7 +1,7 @@
 """
 pages/2_2D_MYLAR.py - 2D Mylar / 模切材料快速報價頁面
-Version: v2.8.4_20260821
-Description: 支援 PDF / DXF 混合上傳，具備 PDF 尺寸提取、人工確認與手動 Fallback 機制。
+Version: v2.8.5_20260821
+Description: 支援 PDF / DXF 混合上傳，具備 PDF 尺寸提取、獨立 file_id 隔離、人工確認與零假值手動 Fallback。
 """
 
 import streamlit as st
@@ -14,7 +14,7 @@ from datetime import datetime
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from dxf_parser import parse_dxf_2d
-from pdf_2d_parser import parse_pdf_2d
+from pdf_2d_parser import parse_pdf_dimensions
 from cad_parser import generate_excel_report, generate_word_report, is_valid_image
 
 
@@ -33,7 +33,6 @@ def reset_2d_session():
     cleanup_2d_temp()
     st.session_state.parsed_2d_results = None
     st.session_state.excel_2d_bytes = None
-    st.session_state.word_2d_bytes = None
     st.session_state.uploader_2d_key += 1
 
 
@@ -74,7 +73,6 @@ with st.expander("🧪 2D 模切材料參數設定", expanded=True):
         else:
             selected_thickness = float(thickness_option)
 
-# 驗證 Thickness > 0
 if selected_thickness <= 0:
     st.error("⚠️ 請輸入有效的材料厚度（必須大於 0）")
     st.stop()
@@ -100,6 +98,7 @@ if uploaded_2d_files:
         for idx, up_file in enumerate(uploaded_2d_files):
             fname = up_file.name
             ext = os.path.splitext(fname)[1].lower()
+            file_id = f"{idx}_{abs(hash(fname))}"
             status_text.text(f"正在處理檔案 ({idx+1}/{len(uploaded_2d_files)}): {fname} ...")
 
             with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp:
@@ -110,13 +109,15 @@ if uploaded_2d_files:
             if ext == '.dxf':
                 res = parse_dxf_2d(tmp_path, user_thickness=selected_thickness)
                 res["file_name"] = fname
+                res["file_id"] = file_id
                 res["source_type"] = "DXF"
                 res["dimension_source"] = "DXF Geometry"
                 res["confirmed"] = True
                 parsed_results.append(res)
             elif ext == '.pdf':
-                res = parse_pdf_2d(tmp_path)
+                res = parse_pdf_dimensions(tmp_path)
                 res["file_name"] = fname
+                res["file_id"] = file_id
                 res["source_type"] = "PDF"
                 res["thickness"] = selected_thickness
                 res["material_type"] = material_type
@@ -126,83 +127,73 @@ if uploaded_2d_files:
                     res["length"] = l_val
                     res["width"] = w_val
                     res["dimensions_str"] = f"{l_val}*{w_val}"
-                    res["confirmed"] = False  # 需要人工確認
+                    res["confirmed"] = False
+                else:
+                    # 辨識失敗時設定為零假值 (0.0)，強制人工輸入
+                    res["length"] = 0.0
+                    res["width"] = 0.0
+                    res["confirmed"] = False
                 parsed_results.append(res)
 
             progress_bar.progress((idx + 1) / len(uploaded_2d_files))
 
-        status_text.success("🎉 2D 檔案初步辨識完成！請在下方進行確認或手動調整。")
+        status_text.success("🎉 2D 檔案辨識完成！請在下方確認或手動輸入尺寸。")
         st.session_state.parsed_2d_results = parsed_results
 
 if st.session_state.parsed_2d_results:
     st.subheader("📋 2D 快速報價尺寸確認與調整")
     
-    updated_results = []
     all_confirmed = True
+    updated_results = []
 
-    for i, res in enumerate(st.session_state.parsed_2d_results):
-        fname = res.get("file_name", f"Item_{i}")
+    for res in st.session_state.parsed_2d_results:
+        fname = res.get("file_name", "unknown")
+        file_id = res.get("file_id", "0")
+        source_type = res.get("source_type", "Unknown")
+
         st.markdown(f"---")
-        st.markdown(f"### 檔案：`{fname}` ({res.get('source_type', 'Unknown')})")
+        st.markdown(f"### 檔案：`{fname}` ({source_type})")
 
-        if res.get("source_type") == "PDF":
-            st.info("ℹ️ **PDF Dimension / Quotation Reference Only**\n本尺寸依客戶提供 PDF 圖面標註進行估價；正式製作尺寸以經確認之 DXF / DWG 工程資料為準。")
+        if source_type == "PDF":
+            st.warning("ℹ️ **PDF Dimension / Quotation Reference Only**\n本尺寸依客戶提供 PDF 圖面標註進行估價；正式製作尺寸以經確認之 DXF / DWG 工程資料為準。")
 
-        if res.get("status") == "success":
-            default_l = float(res.get("length", 100.0))
-            default_w = float(res.get("width", 50.0))
+        is_success = (res.get("status") == "success")
+        default_l = float(res.get("length", 0.0))
+        default_w = float(res.get("width", 0.0))
 
-            col_u1, col_u2, col_u3 = st.columns(3)
-            with col_u1:
-                user_l = st.number_input(f"Length (mm) [{i}]", min_value=0.1, value=default_l, step=1.0, key=f"l_{i}")
-            with col_u2:
-                user_w = st.number_input(f"Width (mm) [{i}]", min_value=0.1, value=default_w, step=1.0, key=f"w_{i}")
-            with col_u3:
-                is_conf = st.checkbox(f"確認採用此尺寸 [{i}]", value=res.get("confirmed", False), key=f"conf_{i}")
+        if not is_success:
+            st.error(f"⚠️ 自動尺寸辨識失敗（{res.get('error_message', '無法可靠辨識')}），請手動輸入有效尺寸。")
 
-            # L >= W 正規化
-            final_l = max(user_l, user_w)
-            final_w = min(user_l, user_w)
-            gross_area = final_l * final_w
+        col_u1, col_u2, col_u3 = st.columns(3)
+        with col_u1:
+            user_l = st.number_input(f"Length (mm) [{fname}]", min_value=0.0, value=default_l, step=1.0, key=f"l_{file_id}")
+        with col_u2:
+            user_w = st.number_input(f"Width (mm) [{fname}]", min_value=0.0, value=default_w, step=1.0, key=f"w_{file_id}")
+        with col_u3:
+            is_conf = st.checkbox(f"確認採用 [{fname}]", value=res.get("confirmed", False), key=f"conf_{file_id}")
 
-            res["length"] = final_l
-            res["width"] = final_w
-            res["thickness"] = selected_thickness
-            res["material_type"] = material_type
-            res["dimensions_str"] = f"{final_l}*{final_w}"
-            res["gross_area"] = gross_area
-            res["net_area"] = gross_area
-            res["confirmed"] = is_conf
+        # 驗證 Length > 0 且 Width > 0 且必須勾選確認
+        if user_l <= 0 or user_w <= 0:
+            is_conf = False
+            if is_conf or st.session_state.get(f"conf_{file_id}", False):
+                st.warning("⚠️ Length 與 Width 必須大於 0 始可確認。")
 
-            if not is_conf:
-                all_confirmed = False
-        else:
-            # 發生錯誤時提供手動 Fallback
-            st.warning(f"⚠️ 自動尺寸辨識失敗 ({res.get('error_message', '未知錯誤')})，請手動輸入尺寸。")
-            col_f1, col_f2, col_f3 = st.columns(3)
-            with col_f1:
-                manual_l = st.number_input(f"手動 Length (mm) [{i}]", min_value=0.1, value=100.0, step=1.0, key=f"ml_{i}")
-            with col_f2:
-                manual_w = st.number_input(f"手動 Width (mm) [{i}]", min_value=0.1, value=50.0, step=1.0, key=f"mw_{i}")
-            with col_f3:
-                manual_conf = st.checkbox(f"確認並採用手動尺寸 [{i}]", value=True, key=f"mconf_{i}")
+        final_l = max(user_l, user_w)
+        final_w = min(user_l, user_w)
+        gross_area = final_l * final_w
 
-            final_l = max(manual_l, manual_w)
-            final_w = min(manual_l, manual_w)
-            gross_area = final_l * final_w
+        res["status"] = "success"
+        res["length"] = final_l
+        res["width"] = final_w
+        res["thickness"] = selected_thickness
+        res["material_type"] = material_type
+        res["dimensions_str"] = f"{final_l}*{final_w}"
+        res["gross_area"] = gross_area
+        res["net_area"] = gross_area
+        res["confirmed"] = is_conf
 
-            res["status"] = "success"
-            res["length"] = final_l
-            res["width"] = final_w
-            res["thickness"] = selected_thickness
-            res["material_type"] = material_type
-            res["dimensions_str"] = f"{final_l}*{final_w}"
-            res["gross_area"] = gross_area
-            res["net_area"] = gross_area
-            res["confirmed"] = manual_conf
-
-            if not manual_conf:
-                all_confirmed = False
+        if not is_conf:
+            all_confirmed = False
 
         updated_results.append(res)
 
@@ -238,4 +229,4 @@ if st.session_state.parsed_2d_results:
         with col_b2:
             st.button("🔄 重置 2D 頁面", on_click=reset_2d_session, width="stretch")
     else:
-        st.warning("⚠️ 請確認並勾選所有檔案的「確認採用」後，即可解鎖 Excel 報價單下載。")
+        st.warning("⚠️ 請確認並勾選所有檔案的「確認採用」，且數值均大於 0 後，始可解鎖 Excel 報價單下載。")
