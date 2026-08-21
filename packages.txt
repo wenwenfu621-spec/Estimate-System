@@ -1,2 +1,8 @@
 libcairo2
 libcairo2-dev
+libgl1-mesa-glx
+libglib2.0-0
+libglu1-mesa
+libx11-6
+libxext6
+libxrender1
