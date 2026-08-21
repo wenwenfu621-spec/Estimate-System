@@ -1,7 +1,8 @@
 """
 app.py - Streamlit 系統首頁 (Landing Page)
-Version: v2.8.1_20260821
+Version: v2.8.2_20260821
 Description: 提供 3D CAD 與 2D Mylar 雙軌功能獨立入口，採用純 ASCII 檔名導航。
+             路徑完全精準對應 pages/1_3D_CAD.py 與 pages/2_2D_Mylar.py。
 """
 
 import streamlit as st
@@ -48,7 +49,7 @@ def inject_custom_elements():
         height: 220px; display: flex; flex-direction: column; justify-content: space-between;
     }}
     </style>
-    <div class="version-badge-left">Version: v2.8.1_20260821</div>
+    <div class="version-badge-left">Version: v2.8.2_20260821</div>
     <div class="custom-footer-max">{avatar_html}<span class="custom-footer-text">Design by Max</span></div>
     """
     st.markdown(custom_css, unsafe_allow_html=True)
