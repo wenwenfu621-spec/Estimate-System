@@ -1,9 +1,8 @@
 """
 cad_parser.py - CAD 解析與報表產出模組
-Version: v2.3.1_20260821
+Version: v2.3.2_20260821
 Description: 支援載入 template.xlsm / template.xlsx 範本檔。
-             修正自我循環引用 ImportError 錯誤。
-             採用 OpenCASCADE 原生 Bnd_OBB API 計算精確最小包容盒素材尺寸，
+             修正 OCP Bnd_OBB API (XHSize*2) 呼叫錯誤，成功觸發真 OBB 計算。
              尺寸採 math.ceil 無條件進位至個位數整數。
              使用 safe_str + set_cell_value_safe 安全寫入 B4~B7 表頭資訊，
              B/P 欄自動調整欄寬，全數儲存格統一指定為「標楷體」。
@@ -73,8 +72,8 @@ def calculate_obb_dimensions(model: cq.Workplane) -> List[float]:
             # 建立精確之 Optimal Bounding Box
             BRepBndLib.AddOBB_s(occ_shape, obb, True, True, True)
             
-            # XSize, YSize, ZSize 即為 OBB 之全尺寸 (長/寬/高)
-            dims = [obb.XSize(), obb.YSize(), obb.ZSize()]
+            # XHSize, YHSize, ZHSize 為 OBB 半尺寸，乘以 2 得到真實全尺寸 (長/寬/高)
+            dims = [obb.XHSize() * 2.0, obb.YHSize() * 2.0, obb.ZHSize() * 2.0]
             if all(d > 0 for d in dims):
                 return dims
         except Exception:
