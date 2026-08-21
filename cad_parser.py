@@ -1,10 +1,11 @@
 """
 cad_parser.py - CAD 解析與報表產出模組
-Version: v2.5.1_20260821
+Version: v2.5.2_20260821
 Description: 支援載入 template.xlsm / template.xlsx 範本檔。
              同時計算 OBB 與 AABB，自動採納素材體積較小者。
-             支援導出等角視圖 (1,1,1) 之 SVG 與安全 PNG 轉譯 (採用輕量化引擎)。
-             獨立匯出 Word 圖文報價單 (.docx)，100% 不干擾 Excel 原有導出邏輯與公式運算。
+             支援導出等角視圖 (1,1,1) 之 SVG，並透過 svglib/reportlab 純 Python 引擎
+             高畫質轉譯為 PNG 圖片，完美插入 Word 圖文報價單 (.docx)。
+             100% 不干擾 Excel 原有導出邏輯與公式運算。
 """
 
 import os
@@ -26,6 +27,14 @@ try:
     HAS_DOCX = True
 except ImportError:
     HAS_DOCX = False
+
+# 引入純 Python SVG 轉譯模組 (svglib / reportlab)
+try:
+    from svglib.svglib import svg2rlg
+    from reportlab.graphics import renderPM
+    HAS_SVGLIB = True
+except ImportError:
+    HAS_SVGLIB = False
 
 # 引入 OpenCASCADE 原生 Bnd_OBB 模組以進行精確幾何最小包容盒計算
 try:
@@ -95,8 +104,8 @@ def calculate_obb_dimensions(model: cq.Workplane) -> List[float]:
 
 def parse_cad_with_screenshot(file_path: str) -> Dict[str, Any]:
     """
-    讀取 CAD 檔案，同時計算 OBB 與 AABB 尺寸，並自動採納素材體積較小者。
-    同時嘗試匯出等角視圖 (1, 1, 1) 的預覽截圖。
+    讀取 CAD 檔案，同時計算 OBB 與 AABB 尺寸，自動採納素材體積較小者。
+    並使用 svglib 引擎將等角視圖 (1, 1, 1) SVG 轉譯為 PNG 圖檔。
     """
     if not os.path.exists(file_path):
         raise FileNotFoundError(f"找不到檔案：{file_path}")
@@ -153,7 +162,7 @@ def parse_cad_with_screenshot(file_path: str) -> Dict[str, Any]:
             "error_message": f"CAD 幾何解析失敗: {str(e)}"
         }
 
-    # 2. 獨立等角視圖截圖流程 (1, 1, 1 視角)
+    # 2. 獨立等角視圖截圖流程 (1, 1, 1 視角，採用 svglib 轉譯引擎)
     img_path = None
     try:
         svg_tmp = tempfile.NamedTemporaryFile(delete=False, suffix='.svg')
@@ -167,14 +176,13 @@ def parse_cad_with_screenshot(file_path: str) -> Dict[str, Any]:
         # 匯出等角視圖 SVG (projectionDir=(1,1,1))
         cq.exporters.export(model, svg_path, opt={"projectionDir": (1, 1, 1), "showHidden": False})
 
-        # 輕量化轉譯防護機制
-        try:
-            with Image.open(svg_path) as img:
-                img_resized = img.resize((400, 300))
-                img_resized.save(img_path_candidate, format="PNG")
-            img_path = img_path_candidate
-        except Exception:
-            # 若雲端缺少 SVG 圖片驅動，保持數據解析成功，不影響 Excel/Word 產出
+        if HAS_SVGLIB:
+            # 採用純 Python 的 svglib + reportlab 繪製 PNG，避開底層 C 庫依賴
+            drawing = svg2rlg(svg_path)
+            if drawing:
+                renderPM.drawToFile(drawing, img_path_candidate, fmt="PNG")
+                img_path = img_path_candidate
+        else:
             img_path = None
 
         if os.path.exists(svg_path):
