@@ -1,12 +1,12 @@
 """
-pdf_2d_parser.py - 輕量化 PDF 2D 尺寸標註與上下文解析模組
-Version: v2.8.6_20260821
-Description: 使用 pypdf 提取文字與座標，支援公差綁定、直徑/圓形件識別與 Notes 降權。
+pdf_2d_parser.py - 輕量化 PDF 2D 尺寸標註解析模組
+Version: v2.8.7_20260821
+Description: 支援 pypdf 文字層萃取；若遇無文字層之 CAD 向量 PDF，則安全降級回傳 needs_manual_input。
 """
 
 import os
 import re
-from typing import Dict, Any, List
+from typing import Dict, Any
 
 try:
     from pypdf import PdfReader
@@ -16,7 +16,7 @@ except ImportError:
 
 
 def parse_pdf_dimensions(file_path: str) -> Dict[str, Any]:
-    """解析 PDF 取得最大外觀尺寸或外徑 (Length x Width / Circular)"""
+    """解析 PDF 取得尺寸，無文字層時安全降級要求手動輸入"""
     if not os.path.exists(file_path):
         return {"status": "error", "error_message": "找不到 PDF 檔案", "status_code": "needs_manual_input"}
     
@@ -40,10 +40,14 @@ def parse_pdf_dimensions(file_path: str) -> Dict[str, Any]:
     except Exception as e:
         return {"status": "error", "error_message": f"PDF 讀取例外: {str(e)}", "status_code": "needs_manual_input"}
 
+    # 如果沒有文字層（例如全為 Vector Path 且 pypdf 抓不到字串），安全降級交由人工輸入
     if not text_elements:
-        return {"status": "error", "error_message": "PDF 無文字層（掃描型 PDF）", "status_code": "needs_manual_input"}
+        return {
+            "status": "error", 
+            "error_message": "此 PDF 無可提取之文字層（CAD 向量圖面），請手動輸入外觀尺寸", 
+            "status_code": "needs_manual_input"
+        }
 
-    # 排除純 Notes / 材質 / 單位等關鍵字
     exclude_keywords = [
         "THICKNESS", "ADHESIVE", "R", "RADIUS", "HOLE", "PITCH", 
         "TYP", "REF", "SCALE", "DATE", "REV", "NOTE", "MATERIAL", "HARDNESS", "MM", "INCH"
@@ -52,15 +56,12 @@ def parse_pdf_dimensions(file_path: str) -> Dict[str, Any]:
     diameters = []
     standard_dims = []
 
-    # 匹配直徑 (如 Ø17.1, DIA 17.1)
     dia_pattern = re.compile(r'(?:[Ø⌀φΦ]|DIA\.?\s*)([0-9]+(?:\.[0-9]+)?)', re.IGNORECASE)
-    # 匹配一般尺寸與公差 (如 69.7, 69.7±0.3, 38.92)
     dim_pattern = re.compile(r'^([0-9]+(?:\.[0-9]+)?)\s*(?:[±±+-]\s*[0-9]+(?:\.[0-9]+)?(?:/[0-9]+(?:\.[0-9]+)?)?)?$')
 
     for el in text_elements:
         txt = el["text"].upper()
         
-        # 檢查是否為直徑
         dia_match = dia_pattern.search(txt)
         if dia_match:
             try:
@@ -71,7 +72,6 @@ def parse_pdf_dimensions(file_path: str) -> Dict[str, Any]:
                 pass
             continue
 
-        # 檢查是否含有排除關鍵字
         if any(kw in txt for kw in exclude_keywords):
             continue
 
@@ -79,17 +79,13 @@ def parse_pdf_dimensions(file_path: str) -> Dict[str, Any]:
         if match:
             try:
                 val = float(match.group(1))
-                # 排除過小數值（如厚度 1mm 或 2.8mm 等局部特徵）
                 if 5.0 <= val <= 3000.0:
                     standard_dims.append(val)
             except Exception:
                 pass
 
-    # 判定邏輯 1：若存在明顯的最大外徑（針對圓形件如 Ø17.1 與內孔 Ø6.x）
     if diameters:
-        # 取最大的直徑作為外徑 (Outer Diameter)
         max_dia = max(diameters)
-        # 若有其他較小的直徑（如孔徑），確保 max_dia 是顯著的外or 主尺寸
         return {
             "status": "success",
             "file_type": "PDF",
@@ -100,7 +96,6 @@ def parse_pdf_dimensions(file_path: str) -> Dict[str, Any]:
             "dimension_source": "PDF Outer Diameter"
         }
 
-    # 判定邏輯 2：矩形或一般異形件，取前兩個最大的獨立尺寸作為 Length 與 Width (如 Test A: 38.92, 27.26; Test C: 69.7, 12.8)
     unique_dims = sorted(list(set(standard_dims)), reverse=True)
     if len(unique_dims) >= 2:
         l = unique_dims[0]
@@ -119,6 +114,6 @@ def parse_pdf_dimensions(file_path: str) -> Dict[str, Any]:
 
     return {
         "status": "error",
-        "error_message": "無法從 PDF 中可靠辨識出整體外框尺寸",
+        "error_message": "無法從 PDF 文字中可靠辨識出整體外框尺寸",
         "status_code": "needs_manual_input"
     }
