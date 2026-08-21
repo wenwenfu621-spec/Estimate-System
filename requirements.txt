@@ -1,8 +1,7 @@
 streamlit
-cadquery-ocp
+cadquery-ocp-novtk
 cadquery
 openpyxl
 Pillow
 python-docx
 cairosvg
-numpy
