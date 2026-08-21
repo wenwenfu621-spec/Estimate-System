@@ -1,10 +1,10 @@
 """
 cad_parser.py - CAD 解析與報表產出模組
-Version: v2.1.3_20260820
+Version: v2.2.0_20260821
 Description: 支援載入 template.xlsm / template.xlsx 範本檔。
+             支援 OBB (最小素材包容盒) 與 AABB (標準投影外框) 雙模式計算，
              尺寸採 math.ceil 無條件進位至個位數整數。
-             新增 safe_str 徹底防禦 header_info AttributeError 錯誤，
-             使用 set_cell_value_safe 安全寫入 B4~B7 表頭資訊，
+             使用 safe_str + set_cell_value_safe 安全寫入 B4~B7 表頭資訊，
              B/P 欄自動調整欄寬，全數儲存格統一指定為「標楷體」。
 """
 
@@ -13,6 +13,7 @@ import math
 import tempfile
 from datetime import datetime
 from typing import Dict, Any, List, Optional
+import numpy as np
 import cadquery as cq
 from PIL import Image
 import openpyxl
@@ -53,9 +54,41 @@ def set_cell_value_safe(ws, row: int, col: int, value: Any, font: Optional[Font]
         pass
 
 
-def parse_cad_with_screenshot(file_path: str) -> Dict[str, Any]:
+def calculate_obb_dimensions(model: cq.Workplane) -> List[float]:
     """
-    讀取 CAD 檔案，提取邊界尺寸並無條件進位至個位數整數 (math.ceil)。
+    使用 PCA (主成分分析) 計算 CAD 模型之 OBB (Oriented Bounding Box 最小包容盒) 尺寸
+    """
+    try:
+        # 1. 離散化表面點雲
+        shape = model.val()
+        tess = shape.tessellate(tolerance=0.1)
+        points = np.array(tess[0])
+        
+        if len(points) < 4:
+            bbox = shape.BoundingBox()
+            return [bbox.xlen, bbox.ylen, bbox.zlen]
+
+        # 2. PCA 計算主軸與旋轉矩陣
+        mean = np.mean(points, axis=0)
+        centered = points - mean
+        cov = np.cov(centered, rowvar=False)
+        eigenvalues, eigenvectors = np.linalg.eigh(cov)
+
+        # 3. 點雲投影至主軸座標系
+        projected = np.dot(centered, eigenvectors)
+        min_p = np.min(projected, axis=0)
+        max_p = np.max(projected, axis=0)
+        dims = max_p - min_p
+
+        return dims.tolist()
+    except Exception:
+        bbox = model.val().BoundingBox()
+        return [bbox.xlen, bbox.ylen, bbox.zlen]
+
+
+def parse_cad_with_screenshot(file_path: str, mode: str = "OBB") -> Dict[str, Any]:
+    """
+    讀取 CAD 檔案，依指定模式 (OBB 或 AABB) 提取邊界尺寸，並無條件進位至個位數整數 (math.ceil)。
     """
     if not os.path.exists(file_path):
         raise FileNotFoundError(f"找不到檔案：{file_path}")
@@ -80,19 +113,23 @@ def parse_cad_with_screenshot(file_path: str) -> Dict[str, Any]:
                 occ_shape = reader.Shape()
                 model = cq.Workplane("XY").newObject([cq.Shape.cast(occ_shape)])
 
-        bbox = model.val().BoundingBox()
-        
+        if mode == "OBB":
+            raw_dims = calculate_obb_dimensions(model)
+        else:
+            bbox = model.val().BoundingBox()
+            raw_dims = [bbox.xlen, bbox.ylen, bbox.zlen]
+
         # 無條件進位至個位數整數
-        x_len = math.ceil(bbox.xlen)
-        y_len = math.ceil(bbox.ylen)
-        z_len = math.ceil(bbox.zlen)
-        
+        x_len = math.ceil(raw_dims[0])
+        y_len = math.ceil(raw_dims[1])
+        z_len = math.ceil(raw_dims[2])
+
         dims_sorted: List[int] = sorted([x_len, y_len, z_len], reverse=True)
-        
+
         length_val = dims_sorted[0]
         width_val = dims_sorted[1]
         height_val = dims_sorted[2]
-        
+
         dimensions_str = f"{length_val}*{width_val}*{height_val}"
     except Exception as e:
         return {
