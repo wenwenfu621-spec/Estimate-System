@@ -1,7 +1,7 @@
 """
 pages/2_2D_MYLAR.py - 2D Mylar / 模切材料快速報價頁面
-Version: v2.8.5_20260821
-Description: 支援 PDF / DXF 混合上傳，具備 PDF 尺寸提取、獨立 file_id 隔離、人工確認與零假值手動 Fallback。
+Version: v2.8.6_20260821
+Description: 支援 PDF / DXF 混合上傳，具備 file_id 隔離、嚴格的 Excel 匯出閘門與零假值防呆。
 """
 
 import streamlit as st
@@ -111,6 +111,7 @@ if uploaded_2d_files:
                 res["file_name"] = fname
                 res["file_id"] = file_id
                 res["source_type"] = "DXF"
+                res["shape_type"] = "Rectangular"
                 res["dimension_source"] = "DXF Geometry"
                 res["confirmed"] = True
                 parsed_results.append(res)
@@ -121,15 +122,16 @@ if uploaded_2d_files:
                 res["source_type"] = "PDF"
                 res["thickness"] = selected_thickness
                 res["material_type"] = material_type
+                
                 if res.get("status") == "success":
-                    l_val = max(res.get("length", 0), res.get("width", 0))
-                    w_val = min(res.get("length", 0), res.get("width", 0))
+                    l_val = max(res.get("length", 0.0), res.get("width", 0.0))
+                    w_val = min(res.get("length", 0.0), res.get("width", 0.0))
                     res["length"] = l_val
                     res["width"] = w_val
                     res["dimensions_str"] = f"{l_val}*{w_val}"
-                    res["confirmed"] = False
+                    res["confirmed"] = False  # 必須人工確認
                 else:
-                    # 辨識失敗時設定為零假值 (0.0)，強制人工輸入
+                    # 辨識失敗：設定為 None / 0，不預填假尺寸
                     res["length"] = 0.0
                     res["width"] = 0.0
                     res["confirmed"] = False
@@ -143,19 +145,23 @@ if uploaded_2d_files:
 if st.session_state.parsed_2d_results:
     st.subheader("📋 2D 快速報價尺寸確認與調整")
     
-    all_confirmed = True
     updated_results = []
+    incomplete_items = []
 
     for res in st.session_state.parsed_2d_results:
         fname = res.get("file_name", "unknown")
         file_id = res.get("file_id", "0")
         source_type = res.get("source_type", "Unknown")
+        shape_type = res.get("shape_type", "Rectangular")
 
         st.markdown(f"---")
         st.markdown(f"### 檔案：`{fname}` ({source_type})")
 
         if source_type == "PDF":
             st.warning("ℹ️ **PDF Dimension / Quotation Reference Only**\n本尺寸依客戶提供 PDF 圖面標註進行估價；正式製作尺寸以經確認之 DXF / DWG 工程資料為準。")
+
+        if shape_type == "Circular":
+            st.info("🔵 **Shape Type: Circular (圓形件)**\n已自動識別為外徑，長寬採用相同尺寸。")
 
         is_success = (res.get("status") == "success")
         default_l = float(res.get("length", 0.0))
@@ -166,17 +172,13 @@ if st.session_state.parsed_2d_results:
 
         col_u1, col_u2, col_u3 = st.columns(3)
         with col_u1:
-            user_l = st.number_input(f"Length (mm) [{fname}]", min_value=0.0, value=default_l, step=1.0, key=f"l_{file_id}")
+            user_l = st.number_input(f"Length (mm)", min_value=0.0, value=default_l, step=1.0, key=f"l_{file_id}")
         with col_u2:
-            user_w = st.number_input(f"Width (mm) [{fname}]", min_value=0.0, value=default_w, step=1.0, key=f"w_{file_id}")
+            user_w = st.number_input(f"Width (mm)", min_value=0.0, value=default_w, step=1.0, key=f"w_{file_id}")
         with col_u3:
-            is_conf = st.checkbox(f"確認採用 [{fname}]", value=res.get("confirmed", False), key=f"conf_{file_id}")
-
-        # 驗證 Length > 0 且 Width > 0 且必須勾選確認
-        if user_l <= 0 or user_w <= 0:
-            is_conf = False
-            if is_conf or st.session_state.get(f"conf_{file_id}", False):
-                st.warning("⚠️ Length 與 Width 必須大於 0 始可確認。")
+            # 只有當 Length > 0 且 Width > 0 時才允許勾選確認採用
+            can_check = (user_l > 0 and user_w > 0)
+            is_conf = st.checkbox(f"確認採用", value=res.get("confirmed", False) and can_check, disabled=not can_check, key=f"conf_{file_id}")
 
         final_l = max(user_l, user_w)
         final_w = min(user_l, user_w)
@@ -192,13 +194,24 @@ if st.session_state.parsed_2d_results:
         res["net_area"] = gross_area
         res["confirmed"] = is_conf
 
-        if not is_conf:
-            all_confirmed = False
+        # 檢查是否準備就緒
+        is_ready = (final_l > 0 and final_w > 0 and is_conf)
+        if not is_ready:
+            reason = []
+            if final_l <= 0 or final_w <= 0:
+                reason.append("尚未輸入有效 Length / Width")
+            if not is_conf:
+                reason.append("尺寸有效，但尚未確認採用")
+            incomplete_items.append((fname, ", ".join(reason)))
 
         updated_results.append(res)
 
     st.markdown("---")
-    if all_confirmed:
+    
+    # 集中匯出閘門 (Excel Export Gate)
+    all_ready = (len(updated_results) > 0 and len(incomplete_items) == 0)
+
+    if all_ready:
         header_info = {"customer": customer_input, "contact": contact_input, "phone": phone_input, "fax": fax_input}
 
         has_xlsm = os.path.exists("template.xlsm") or os.path.exists("Template.xlsm")
@@ -229,4 +242,4 @@ if st.session_state.parsed_2d_results:
         with col_b2:
             st.button("🔄 重置 2D 頁面", on_click=reset_2d_session, width="stretch")
     else:
-        st.warning("⚠️ 請確認並勾選所有檔案的「確認採用」，且數值均大於 0 後，始可解鎖 Excel 報價單下載。")
+        st.warning(f"⚠️ 尚有 {len(incomplete_items)} 個檔案未完成：\n" + "\n".join([f"• `{item[0]}`: {item[1]}" for item in incomplete_items]))
