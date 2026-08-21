@@ -1,8 +1,5 @@
-streamlit
-cadquery
-openpyxl
-Pillow
-python-docx
-svglib
-reportlab
-numpy
+libgl1
+libglu1-mesa
+libx11-6
+libxext6
+libxrender1
