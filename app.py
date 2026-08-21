@@ -1,12 +1,12 @@
 """
 app.py - Streamlit 網頁介面程式
-Version: v2.5.7_20260821
+Version: v2.6.0_20260821
 Description: 提供 CAD 報價辨識工具。
-             版本升級 v2.5.7：整合 Auto Crop 畫面優化與 Word 4.5 英吋視圖展現。
+             Phase 1 升級：展示第三角法 (Third-Angle) 工程三視圖 + 等角圖卡預覽。
              自動同步計算 OBB/AABB 並取小值採納，
              展示「加工素材計算採用下列兩種方式之最小值」圖文說明區塊，
              視窗預覽標註尺寸來源模式 (OBB 或 AABB)，
-             支援獨立生成與下載 Word 圖文報價單 (.docx) 含等角視圖縮圖，
+             支援獨立生成與下載 Word 圖文報價單 (.docx) 含工程視圖圖卡，
              含完整 image_error 錯誤診斷碼展現。
              Markdown 顯示轉義星號 (\\.replace("*", "\\*")) 解決顯示問題，
              原生輸入框帶 Tab 切換提示，
@@ -95,7 +95,7 @@ def inject_custom_elements():
     }}
     </style>
     
-    <div class="version-badge-left">Version: v2.5.7_20260821</div>
+    <div class="version-badge-left">Version: v2.6.0_20260821</div>
     
     <div class="custom-footer-max">
         {avatar_html}
@@ -118,7 +118,7 @@ def cleanup_temp_files():
 
 
 def reset_session():
-    """點擊重置按鈕時觸發：清空暫存檔、Session 狀態，並變更 uploader_key 強制清空上傳元件與輸入框"""
+    """點擊重置按鈕時觸發：清空暫存檔、Session 狀態，並變更 uploader_key"""
     cleanup_temp_files()
     st.session_state.parsed_results = None
     st.session_state.excel_bytes = None
@@ -129,12 +129,10 @@ def reset_session():
     st.session_state.uploader_key_num += 1
 
 
-st.set_page_config(page_title="CAD 報價辨識工具 (v2.5.7)", page_icon="⚙️", layout="centered")
+st.set_page_config(page_title="CAD 報價辨識工具 (v2.6.0)", page_icon="⚙️", layout="centered")
 
-# 載入懸浮元件
 inject_custom_elements()
 
-# 標題採用 HTML + white-space: nowrap 鎖定排版，徹底防止齒輪與文字折行堆疊
 st.markdown("<h1 style='text-align: center; white-space: nowrap;'>⚙️ CAD 自動報價與尺寸辨識工具 ⚙️</h1>", unsafe_allow_html=True)
 st.write("上傳 `.step` 或 `.igs` 3D 模型檔，點選下方按鈕自動辨識尺寸並套寫至 Excel 與 Word 報價單。")
 
@@ -153,7 +151,6 @@ if "mime_type" not in st.session_state:
 if "temp_files_list" not in st.session_state:
     st.session_state.temp_files_list = []
 
-# 新增 B4~B7 表頭資訊輸入區塊
 with st.expander("📝 客戶與報價表頭資訊填寫 (選填，可直接留空)", expanded=True):
     st.caption("💡 提示：輸入完畢後，按鍵盤 **`Tab`** 鍵可快速切換至下一個輸入欄位。")
     col_c1, col_c2 = st.columns(2)
@@ -164,7 +161,6 @@ with st.expander("📝 客戶與報價表頭資訊填寫 (選填，可直接留�
         contact_input = st.text_input("聯絡人", key=f"contact_{st.session_state.uploader_key_num}")
         fax_input = st.text_input("傳真", key=f"fax_{st.session_state.uploader_key_num}")
 
-# 修改說明標題：加工素材計算採用下列兩種方式之最小值
 with st.expander("📐 加工素材計算採用下列兩種方式之最小值", expanded=True):
     svg_obb = """
     <svg width="200" height="110" viewBox="0 0 200 110" xmlns="http://www.w3.org/2000/svg">
@@ -172,7 +168,6 @@ with st.expander("📐 加工素材計算採用下列兩種方式之最小值", 
         <g transform="translate(100, 52) rotate(-20)">
             <rect x="-60" y="-12" width="120" height="24" rx="3" fill="#3b82f6" fill-opacity="0.15" stroke="#2563eb" stroke-width="2" stroke-dasharray="4 2"/>
             <rect x="-55" y="-8" width="110" height="16" rx="4" fill="#64748b" stroke="#334155" stroke-width="1.5"/>
-            <!-- 僅保留雙向尺寸箭頭 -->
             <line x1="68" y1="-12" x2="68" y2="12" stroke="#2563eb" stroke-width="2"/>
             <polyline points="65,-8 68,-12 71,-8" fill="none" stroke="#2563eb" stroke-width="2"/>
             <polyline points="65,8 68,12 71,8" fill="none" stroke="#2563eb" stroke-width="2"/>
@@ -188,7 +183,6 @@ with st.expander("📐 加工素材計算採用下列兩種方式之最小值", 
         <g transform="translate(100, 50) rotate(-20)">
             <rect x="-55" y="-8" width="110" height="16" rx="4" fill="#64748b" stroke="#334155" stroke-width="1.5"/>
         </g>
-        <!-- 僅保留雙向尺寸箭頭 -->
         <line x1="173" y1="18" x2="173" y2="82" stroke="#dc2626" stroke-width="2"/>
         <polyline points="170,22 173,18 176,22" fill="none" stroke="#dc2626" stroke-width="2"/>
         <polyline points="170,78 173,82 176,78" fill="none" stroke="#dc2626" stroke-width="2"/>
@@ -273,7 +267,7 @@ if uploaded_files:
         with open(excel_path, "rb") as f:
             excel_bytes = f.read()
 
-        # 2. 產生 Word 圖文報表 (含等角視圖縮圖)
+        # 2. 產生 Word 圖文報表 (含三視圖圖卡)
         word_bytes = None
         try:
             word_tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".docx")
@@ -298,12 +292,11 @@ if st.session_state.parsed_results:
     st.subheader("📋 辨識結果預覽")
     for res in st.session_state.parsed_results:
         if res.get("status") == "success":
-            # 針對 Markdown 顯示進行星號反斜線轉義 (\*)，並註明採納模式 (OBB/AABB)
             display_dims_escaped = res['dimensions_str'].replace("*", "\\*")
             used_mode = res.get("used_mode", "OBB")
             
             with st.expander(f"📄 {res['file_name']} - 【尺寸：{display_dims_escaped} mm ({used_mode})】"):
-                col_p1, col_p2 = st.columns([3, 2])
+                col_p1, col_p2 = st.columns([2, 3])
                 with col_p1:
                     st.write(f"**品名 (檔名)**：{res['file_name']}")
                     st.write(f"**尺寸 (長\\*寬\\*高，無條件進位)**：{display_dims_escaped} mm ({used_mode})")
@@ -312,9 +305,9 @@ if st.session_state.parsed_results:
                     st.write(f"**單位**：{res['unit']}")
                 with col_p2:
                     if is_valid_image(res.get("image_path")):
-                        st.image(res["image_path"], caption="CAD 等角視圖預覽", use_container_width=True)
+                        st.image(res["image_path"], caption="CAD 工程三視圖圖卡 (第三角法)", use_container_width=True)
                     else:
-                        st.warning("⚠️ 等角視圖產生失敗")
+                        st.warning("⚠️ 工程三視圖產生失敗")
                         if res.get("image_error"):
                             st.code(f"Diagnose Error: {res['image_error']}", language="text")
 
@@ -323,7 +316,6 @@ if st.session_state.parsed_results:
 
     st.markdown("---")
     
-    # 雙下載按鈕區域與重置按鈕
     col_dl1, col_dl2, col_rst = st.columns([2, 2, 1])
     
     today_date_str = datetime.now().strftime("%Y%m%d")
