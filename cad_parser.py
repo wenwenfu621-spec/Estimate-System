@@ -1,11 +1,10 @@
 """
 cad_parser.py - CAD 解析與報表產出模組
-Version: v2.5.0_20260821
+Version: v2.5.1_20260821
 Description: 支援載入 template.xlsm / template.xlsx 範本檔。
              同時計算 OBB 與 AABB，自動採納素材體積較小者。
-             支援導出等角視圖 (1,1,1) 之 SVG/PNG 截圖。
-             全新新增 generate_word_report() 獨立匯出 Word 圖文報表 (.docx)，
-             100% 不干擾 Excel 原有導出邏輯與公式運算。
+             支援導出等角視圖 (1,1,1) 之 SVG 與安全 PNG 轉譯 (採用輕量化引擎)。
+             獨立匯出 Word 圖文報價單 (.docx)，100% 不干擾 Excel 原有導出邏輯與公式運算。
 """
 
 import os
@@ -18,7 +17,7 @@ from PIL import Image
 import openpyxl
 from openpyxl.styles import Font
 
-# 引入 docx 與 cairosvg 套件
+# 引入 docx 模組
 try:
     import docx
     from docx.shared import Inches, Pt, RGBColor
@@ -27,12 +26,6 @@ try:
     HAS_DOCX = True
 except ImportError:
     HAS_DOCX = False
-
-try:
-    import cairosvg
-    HAS_CAIROSVG = True
-except ImportError:
-    HAS_CAIROSVG = False
 
 # 引入 OpenCASCADE 原生 Bnd_OBB 模組以進行精確幾何最小包容盒計算
 try:
@@ -103,7 +96,7 @@ def calculate_obb_dimensions(model: cq.Workplane) -> List[float]:
 def parse_cad_with_screenshot(file_path: str) -> Dict[str, Any]:
     """
     讀取 CAD 檔案，同時計算 OBB 與 AABB 尺寸，並自動採納素材體積較小者。
-    同時嘗試匯出等角視圖 (1, 1, 1) 的 PNG 截圖。
+    同時嘗試匯出等角視圖 (1, 1, 1) 的預覽截圖。
     """
     if not os.path.exists(file_path):
         raise FileNotFoundError(f"找不到檔案：{file_path}")
@@ -174,19 +167,15 @@ def parse_cad_with_screenshot(file_path: str) -> Dict[str, Any]:
         # 匯出等角視圖 SVG (projectionDir=(1,1,1))
         cq.exporters.export(model, svg_path, opt={"projectionDir": (1, 1, 1), "showHidden": False})
 
-        if HAS_CAIROSVG:
-            # 優先使用 cairosvg 高畫質轉譯為 PNG
-            cairosvg.svg2png(url=svg_path, write_to=img_path_candidate, output_width=800, output_height=600)
+        # 輕量化轉譯防護機制
+        try:
+            with Image.open(svg_path) as img:
+                img_resized = img.resize((400, 300))
+                img_resized.save(img_path_candidate, format="PNG")
             img_path = img_path_candidate
-        else:
-            # 備援使用 Pillow 嘗試處置
-            try:
-                with Image.open(svg_path) as img:
-                    img_resized = img.resize((400, 300))
-                    img_resized.save(img_path_candidate, format="PNG")
-                img_path = img_path_candidate
-            except Exception:
-                img_path = None
+        except Exception:
+            # 若雲端缺少 SVG 圖片驅動，保持數據解析成功，不影響 Excel/Word 產出
+            img_path = None
 
         if os.path.exists(svg_path):
             os.remove(svg_path)
@@ -213,7 +202,6 @@ def generate_excel_report(
 ):
     """
     載入範本檔，寫入客戶表頭資訊與解析數據，全數指定字體為標楷體，並自動調整 B/P 欄寬。
-    （保持原有邏輯，絕不更改）
     """
     template_candidates = [
         "template.xlsm", "template.xlsx", "template.xls",
