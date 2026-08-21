@@ -1,9 +1,8 @@
 """
 cad_parser.py - 3D CAD 解析與報表產出模組
-Version: v2.7.0_20260821
+Version: v2.8.3_20260821
 Description: 專責 3D STEP/IGES 管道，與 2D DXF 管道完全分離。
-             包含 OBB/AABB 最小包容盒計算、第三角法工程三視圖組合圖卡生成，
-             以及 Word 專屬 keep_with_next 原子區塊防跨頁保護。
+             修正 Excel 匯出邏輯：嚴格對齊 template.xlsm 與 xlsm 副檔名與 MIME 類型。
 """
 
 import os
@@ -361,8 +360,8 @@ def generate_excel_report(
     output_excel_path: str,
     header_info: Optional[Dict[str, Any]] = None
 ):
-    """Excel 報表匯出（支援 3D 與 2D 混合項目，標楷體與公式計算）"""
-    template_candidates = ["template.xlsm", "template.xlsx", "Template.xlsm", "Template.xlsx"]
+    """Excel 報表匯出：精確對齊 template.xlsm/xlsx 格式與 keep_vba 參數"""
+    template_candidates = ["template.xlsm", "Template.xlsm", "template.xlsx", "Template.xlsx"]
     template_file = next((tf for tf in template_candidates if os.path.exists(tf)), None)
     is_xlsm = template_file and template_file.lower().endswith('.xlsm')
 
@@ -506,7 +505,6 @@ def generate_word_report(
         img_path = item.get("image_path")
         img_err = item.get("image_error")
 
-        # 項目標題段落 (keep_with_next=True 確保與下方尺寸黏結)
         p_item = doc.add_paragraph()
         p_item.paragraph_format.keep_with_next = True
         r_item = p_item.add_run(f"【項目 {idx+1}】 檔名：{file_name} ({'2D 模切' if ftype == '2D' else '3D 機構件'})")
@@ -514,7 +512,6 @@ def generate_word_report(
         r_item.font.size = Pt(12)
         r_item.font.name = '標楷體'
 
-        # 尺寸詳細數據段落 (keep_with_next=True 確保與下方圖片黏結)
         p_desc = doc.add_paragraph()
         p_desc.paragraph_format.left_indent = Inches(0.2)
         p_desc.paragraph_format.keep_with_next = True
@@ -545,7 +542,6 @@ def generate_word_report(
             r_d2 = p_desc.add_run(f"• 尺寸拆解數值：長 {length} {unit} / 寬 {width} {unit} / 高 {height} {unit}\n")
             r_d2.font.name = '標楷體'
 
-        # 插入預覽圖卡 (寬度 5.8 吋，置中)
         if is_valid_image(img_path):
             try:
                 p_img = doc.add_paragraph()
