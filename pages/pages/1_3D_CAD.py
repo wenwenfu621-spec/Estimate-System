@@ -1,8 +1,8 @@
 """
-pages/1_📦_3D_CAD_Analysis.py - 3D CAD 尺寸辨識專屬頁面
-Version: v2.8.0_20260821
+pages/1_3D_CAD.py - 3D CAD 尺寸辨識專屬頁面
+Version: v2.8.1_20260821
 Description: 專責 STEP/IGES 上傳、OBB/AABB 計算與 3D 工程三視圖預覽。
-             使用獨立的 3D Session State 與專屬 Reset 邏輯。
+             使用獨立的 3D Session State、專屬 Reset 邏輯與返回首頁導航。
 """
 
 import streamlit as st
@@ -32,6 +32,10 @@ def reset_3d_session():
 
 
 st.set_page_config(page_title="3D CAD 尺寸辨識", page_icon="📦", layout="centered")
+
+if st.button("← 返回功能首頁"):
+    st.switch_page("app.py")
+
 st.title("📦 3D 機構件尺寸與報價辨識")
 st.write("上傳 `.step`, `.stp`, `.igs`, `.iges` 3D 模型檔，自動計算 OBB/AABB 包容盒與第三角法三視圖。")
 
