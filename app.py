@@ -1,9 +1,10 @@
 """
 app.py - Streamlit 網頁介面程式
-Version: v2.3.2_20260821
+Version: v2.4.0_20260821
 Description: 提供 CAD 報價辨識工具。
-             預設採用 OBB (最小素材包容盒) 計算素材尺寸，
-             內建去除 4mm/9mm 數值之雙模式箭頭 SVG 示意圖卡片與完美圖文對齊，
+             自動同步計算 OBB/AABB 並取小值採納，
+             完全對齊對照圖，展示「加工素材計算採用下列兩種方式之最小值」圖文說明區塊，
+             視窗預覽標註尺寸來源模式 (OBB 或 AABB)，
              Markdown 顯示轉義星號 (\\.replace("*", "\\*")) 解決 62209 顯示錯誤，
              採用方案 1 原生輸入框帶 Tab 切換提示，
              一鍵重置 Widget Key，頁尾含個人頭像徽章 (Design by Max)。
@@ -91,7 +92,7 @@ def inject_custom_elements():
     }}
     </style>
     
-    <div class="version-badge-left">Version: v2.3.2_20260821</div>
+    <div class="version-badge-left">Version: v2.4.0_20260821</div>
     
     <div class="custom-footer-max">
         {avatar_html}
@@ -124,7 +125,7 @@ def reset_session():
     st.session_state.uploader_key_num += 1
 
 
-st.set_page_config(page_title="CAD 報價辨識工具 (v2.3.2)", page_icon="⚙️", layout="centered")
+st.set_page_config(page_title="CAD 報價辨識工具 (v2.4.0)", page_icon="⚙️", layout="centered")
 
 # 載入懸浮元件
 inject_custom_elements()
@@ -157,15 +158,8 @@ with st.expander("📝 客戶與報價表頭資訊填寫 (選填，可直接留�
         contact_input = st.text_input("聯絡人", key=f"contact_{st.session_state.uploader_key_num}")
         fax_input = st.text_input("傳真", key=f"fax_{st.session_state.uploader_key_num}")
 
-# 新增 OBB / AABB 素材計算模式設定區塊與去數值化 SVG 卡片示意圖
-with st.expander("📐 加工素材計算模式設定 (內定 OBB 模式)", expanded=True):
-    calc_mode_selected = st.radio(
-        "選擇素材尺寸計算演算法：",
-        options=["OBB", "AABB"],
-        format_func=lambda x: "☑ 最小素材尺寸模式 (OBB) - 【系統內定預設】" if x == "OBB" else "⚪ 標準投影外框模式 (AABB)",
-        key=f"mode_{st.session_state.uploader_key_num}"
-    )
-
+# 修改說明標題：加工素材計算採用下列兩種方式之最小值
+with st.expander("📐 加工素材計算採用下列兩種方式之最小值", expanded=True):
     # 去數值 (取消 4mm/9mm 文字) 僅保留箭頭之兩大 SVG 示意卡片
     svg_obb = """
     <svg width="200" height="110" viewBox="0 0 200 110" xmlns="http://www.w3.org/2000/svg">
@@ -241,7 +235,7 @@ if uploaded_files:
                 tmp_path = tmp_file.name
                 st.session_state.temp_files_list.append(tmp_path)
 
-            result = parse_cad_with_screenshot(tmp_path, mode=calc_mode_selected)
+            result = parse_cad_with_screenshot(tmp_path)
             result["file_name"] = uploaded_file.name
             parsed_results.append(result)
 
@@ -282,12 +276,14 @@ if st.session_state.parsed_results:
     st.subheader("📋 辨識結果預覽")
     for res in st.session_state.parsed_results:
         if res.get("status") == "success":
-            # 針對 Markdown 顯示進行星號反斜線轉義 (\*)，徹底避免 Markdown 斜體解析吃掉星號變 62209
+            # 針對 Markdown 顯示進行星號反斜線轉義 (\*)，並註明採納模式 (OBB/AABB)
             display_dims_escaped = res['dimensions_str'].replace("*", "\\*")
+            used_mode = res.get("used_mode", "OBB")
             
-            with st.expander(f"📄 {res['file_name']} - 【尺寸：{display_dims_escaped} mm】"):
+            with st.expander(f"📄 {res['file_name']} - 【尺寸：{display_dims_escaped} mm ({used_mode})】"):
                 st.write(f"**品名 (檔名)**：{res['file_name']}")
-                st.write(f"**尺寸 (長\\*寬\\*高，無條件進位)**：{display_dims_escaped}")
+                st.write(f"**尺寸 (長\\*寬\\*高，無條件進位)**：{display_dims_escaped} mm ({used_mode})")
+                st.write(f"**採納演算法**：{used_mode} 模式 (體積較小者)")
                 st.write(f"**拆解數值**：長 {res.get('length')} / 寬 {res.get('width')} / 高 {res.get('height')}")
                 st.write(f"**單位**：{res['unit']}")
         else:
