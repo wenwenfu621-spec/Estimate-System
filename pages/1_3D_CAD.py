@@ -2,16 +2,18 @@
 pages/1_3D_CAD.py - 3D CAD 尺寸辨識專屬頁面
 Version: v2.8.3_20260821
 Description: 專責 STEP/IGES 上傳、OBB/AABB 計算與 3D 工程三視圖預覽。
-             使用獨立的 3D Session State、專屬 Reset 邏輯與返回首頁導航。
-             動態適配 .xlsm/.xlsx 副檔名與對應 MIME 類型。
+             修正 Excel 匯出：嚴格對齊 .xlsm/.xlsx 與 MIME 類型。
 """
 
 import streamlit as st
 import os
+import sys
 import tempfile
 from datetime import datetime
-from cad_parser import parse_cad_with_screenshot, generate_excel_report, generate_word_report, is_valid_image
 
+# --- 修復模組路徑：確保能正確引用根目錄的 cad_parser ---
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from cad_parser import parse_cad_with_screenshot, generate_excel_report, generate_word_report, is_valid_image
 
 def cleanup_3d_temp():
     if "temp_files_3d" in st.session_state and st.session_state.temp_files_3d:
@@ -99,9 +101,10 @@ if uploaded_3d_files:
 
         header_info = {"customer": customer_input, "contact": contact_input, "phone": phone_input, "fax": fax_input}
 
+        # --- 處理 Excel 副檔名與 MIME ---
         has_xlsm = os.path.exists("template.xlsm") or os.path.exists("Template.xlsm")
         export_ext = ".xlsm" if has_xlsm else ".xlsx"
-
+        
         excel_tmp = tempfile.NamedTemporaryFile(delete=False, suffix=export_ext)
         excel_path = excel_tmp.name
         excel_tmp.close()
@@ -153,6 +156,7 @@ if st.session_state.parsed_3d_results:
     col1, col2, col3 = st.columns(3)
     today_str = datetime.now().strftime("%Y%m%d")
 
+    # --- 輸出按鈕參數 ---
     has_xlsm = os.path.exists("template.xlsm") or os.path.exists("Template.xlsm")
     download_ext = ".xlsm" if has_xlsm else ".xlsx"
     download_mime = "application/vnd.ms-excel.sheet.macroEnabled.12" if has_xlsm else "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
