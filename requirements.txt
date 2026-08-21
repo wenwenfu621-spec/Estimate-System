@@ -1,5 +1,5 @@
 streamlit
-cadquery
+cadquery==2.4.0
 openpyxl
 Pillow
 python-docx
