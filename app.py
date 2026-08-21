@@ -1,8 +1,9 @@
 """
 app.py - Streamlit 網頁介面程式
-Version: v2.2.0_20260821
+Version: v2.3.1_20260821
 Description: 提供 CAD 報價辨識工具。
-             預設採用 OBB (最小素材包容盒) 計算素材尺寸，附雙模式 SVG 示意對比圖，
+             預設採用 OBB (最小素材包容盒) 計算素材尺寸，
+             內建去除 4mm/9mm 數值之雙模式箭頭 SVG 示意圖卡片與完美圖文對齊，
              Markdown 顯示轉義星號 (\\.replace("*", "\\*")) 解決 62209 顯示錯誤，
              採用方案 1 原生輸入框帶 Tab 切換提示，
              一鍵重置 Widget Key，頁尾含個人頭像徽章 (Design by Max)。
@@ -78,9 +79,19 @@ def inject_custom_elements():
         color: #333333;
         white-space: nowrap;
     }}
+    
+    /* 示意圖卡片容器樣式 */
+    .diagram-card-box {{
+        background: #f8fafc;
+        border: 1px solid #e2e8f0;
+        border-radius: 10px;
+        padding: 12px;
+        text-align: center;
+        margin-bottom: 12px;
+    }}
     </style>
     
-    <div class="version-badge-left">Version: v2.2.0_20260821</div>
+    <div class="version-badge-left">Version: v2.3.1_20260821</div>
     
     <div class="custom-footer-max">
         {avatar_html}
@@ -113,7 +124,7 @@ def reset_session():
     st.session_state.uploader_key_num += 1
 
 
-st.set_page_config(page_title="CAD 報價辨識工具 (v2.2.0)", page_icon="⚙️", layout="centered")
+st.set_page_config(page_title="CAD 報價辨識工具 (v2.3.1)", page_icon="⚙️", layout="centered")
 
 # 載入懸浮元件
 inject_custom_elements()
@@ -146,7 +157,7 @@ with st.expander("📝 客戶與報價表頭資訊填寫 (選填，可直接留�
         contact_input = st.text_input("聯絡人", key=f"contact_{st.session_state.uploader_key_num}")
         fax_input = st.text_input("傳真", key=f"fax_{st.session_state.uploader_key_num}")
 
-# 新增 OBB / AABB 素材計算模式選擇區塊與圖示說明卡片
+# 新增 OBB / AABB 素材計算模式設定區塊與去數值化 SVG 卡片示意圖
 with st.expander("📐 加工素材計算模式設定 (內定 OBB 模式)", expanded=True):
     calc_mode_selected = st.radio(
         "選擇素材尺寸計算演算法：",
@@ -155,9 +166,40 @@ with st.expander("📐 加工素材計算模式設定 (內定 OBB 模式)", expa
         key=f"mode_{st.session_state.uploader_key_num}"
     )
 
-    # 示意圖卡片對比說明
+    # 去數值 (取消 4mm/9mm 文字) 僅保留箭頭之兩大 SVG 示意卡片
+    svg_obb = """
+    <svg width="200" height="110" viewBox="0 0 200 110" xmlns="http://www.w3.org/2000/svg">
+        <rect width="200" height="110" rx="6" fill="#f8fafc"/>
+        <g transform="translate(100, 52) rotate(-20)">
+            <rect x="-60" y="-12" width="120" height="24" rx="3" fill="#3b82f6" fill-opacity="0.15" stroke="#2563eb" stroke-width="2" stroke-dasharray="4 2"/>
+            <rect x="-55" y="-8" width="110" height="16" rx="4" fill="#64748b" stroke="#334155" stroke-width="1.5"/>
+            <!-- 僅保留雙向尺寸箭頭 -->
+            <line x1="68" y1="-12" x2="68" y2="12" stroke="#2563eb" stroke-width="2"/>
+            <polyline points="65,-8 68,-12 71,-8" fill="none" stroke="#2563eb" stroke-width="2"/>
+            <polyline points="65,8 68,12 71,8" fill="none" stroke="#2563eb" stroke-width="2"/>
+        </g>
+        <text x="100" y="98" font-family="sans-serif" font-size="11" font-weight="bold" fill="#1e293b" text-anchor="middle">最小素材包容盒 (OBB)</text>
+    </svg>
+    """
+
+    svg_aabb = """
+    <svg width="200" height="110" viewBox="0 0 200 110" xmlns="http://www.w3.org/2000/svg">
+        <rect width="200" height="110" rx="6" fill="#f8fafc"/>
+        <rect x="35" y="18" width="130" height="64" rx="3" fill="#ef4444" fill-opacity="0.12" stroke="#dc2626" stroke-width="2" stroke-dasharray="4 2"/>
+        <g transform="translate(100, 50) rotate(-20)">
+            <rect x="-55" y="-8" width="110" height="16" rx="4" fill="#64748b" stroke="#334155" stroke-width="1.5"/>
+        </g>
+        <!-- 僅保留雙向尺寸箭頭 -->
+        <line x1="173" y1="18" x2="173" y2="82" stroke="#dc2626" stroke-width="2"/>
+        <polyline points="170,22 173,18 176,22" fill="none" stroke="#dc2626" stroke-width="2"/>
+        <polyline points="170,78 173,82 176,78" fill="none" stroke="#dc2626" stroke-width="2"/>
+        <text x="100" y="98" font-family="sans-serif" font-size="11" font-weight="bold" fill="#1e293b" text-anchor="middle">標準投影外框 (AABB)</text>
+    </svg>
+    """
+
     col_img1, col_img2 = st.columns(2)
     with col_img1:
+        st.markdown(f'<div class="diagram-card-box">{svg_obb}</div>', unsafe_allow_html=True)
         st.markdown("""
         **【OBB 最小素材包容盒】**
         * 貼合零件幾何方向旋轉量測
@@ -165,6 +207,7 @@ with st.expander("📐 加工素材計算模式設定 (內定 OBB 模式)", expa
         * **適用**：CNC 實體備料估價
         """, unsafe_allow_html=True)
     with col_img2:
+        st.markdown(f'<div class="diagram-card-box">{svg_aabb}</div>', unsafe_allow_html=True)
         st.markdown("""
         **【AABB 標準投影外框】**
         * 沿世界座標軸 (X/Y/Z) 垂直外包
@@ -239,7 +282,7 @@ if st.session_state.parsed_results:
     st.subheader("📋 辨識結果預覽")
     for res in st.session_state.parsed_results:
         if res.get("status") == "success":
-            # 方案 A: 針對 Markdown 顯示進行星號反斜線轉義 (\*)，徹底避免 Markdown 斜體解析吃掉星號變 62209
+            # 針對 Markdown 顯示進行星號反斜線轉義 (\*)，徹底避免 Markdown 斜體解析吃掉星號變 62209
             display_dims_escaped = res['dimensions_str'].replace("*", "\\*")
             
             with st.expander(f"📄 {res['file_name']} - 【尺寸：{display_dims_escaped} mm】"):
