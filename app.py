@@ -1,6 +1,6 @@
 """
 app.py - Streamlit 網頁介面程式
-Version: v2.3.1_20260821
+Version: v2.3.2_20260821
 Description: 提供 CAD 報價辨識工具。
              預設採用 OBB (最小素材包容盒) 計算素材尺寸，
              內建去除 4mm/9mm 數值之雙模式箭頭 SVG 示意圖卡片與完美圖文對齊，
@@ -91,7 +91,7 @@ def inject_custom_elements():
     }}
     </style>
     
-    <div class="version-badge-left">Version: v2.3.1_20260821</div>
+    <div class="version-badge-left">Version: v2.3.2_20260821</div>
     
     <div class="custom-footer-max">
         {avatar_html}
@@ -124,7 +124,7 @@ def reset_session():
     st.session_state.uploader_key_num += 1
 
 
-st.set_page_config(page_title="CAD 報價辨識工具 (v2.3.1)", page_icon="⚙️", layout="centered")
+st.set_page_config(page_title="CAD 報價辨識工具 (v2.3.2)", page_icon="⚙️", layout="centered")
 
 # 載入懸浮元件
 inject_custom_elements()
