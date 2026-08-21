@@ -1,9 +1,10 @@
 """
 cad_parser.py - CAD 解析與報表產出模組
-Version: v2.5.3_20260821
+Version: v2.5.4_20260821
 Description: 支援載入 template.xlsm / template.xlsx 範本檔。
              同時計算 OBB 與 AABB，自動採納素材體積較小者。
-             支援導出等角視圖 (1,1,1) 之 SVG 與安全 PNG 轉譯。
+             採用 cairosvg 進行高相容性 SVG -> PNG 向量轉譯，
+             解決 renderPMrlPyCairo 後端缺失問題。
              包含完整的 UUID 多檔隔離機制、Pillow 圖片有效性驗證與 image_error 診斷回傳。
              獨立匯出 Word 圖文報價單 (.docx)，100% 不干擾 Excel 原有導出邏輯與公式運算。
 """
@@ -29,13 +30,12 @@ try:
 except ImportError:
     HAS_DOCX = False
 
-# 引入純 Python SVG 轉譯模組 (svglib / reportlab)
+# 引入 CairoSVG 向量轉譯模組
 try:
-    from svglib.svglib import svg2rlg
-    from reportlab.graphics import renderPM
-    HAS_SVGLIB = True
+    import cairosvg
+    HAS_CAIROSVG = True
 except ImportError:
-    HAS_SVGLIB = False
+    HAS_CAIROSVG = False
 
 # 引入 OpenCASCADE 原生 Bnd_OBB 模組以進行精確幾何最小包容盒計算
 try:
@@ -122,7 +122,7 @@ def calculate_obb_dimensions(model: cq.Workplane) -> List[float]:
 def parse_cad_with_screenshot(file_path: str) -> Dict[str, Any]:
     """
     讀取 CAD 檔案，同時計算 OBB 與 AABB 尺寸，自動採納素材體積較小者。
-    並嘗試匯出等角視圖 (1, 1, 1) PNG 圖片，含完整 Exception 捕捉與獨立 UUID 檔名隔離。
+    並使用 cairosvg 匯出等角視圖 (1, 1, 1) PNG 圖片，含完整 Exception 捕捉與獨立 UUID 檔名隔離。
     """
     if not os.path.exists(file_path):
         raise FileNotFoundError(f"找不到檔案：{file_path}")
@@ -179,7 +179,7 @@ def parse_cad_with_screenshot(file_path: str) -> Dict[str, Any]:
             "error_message": f"CAD 幾何解析失敗: {str(e)}"
         }
 
-    # 2. 獨立等角視圖截圖流程 (1, 1, 1 視角，UUID 檔名隔離，捕捉完整 image_error)
+    # 2. 獨立等角視圖截圖流程 (1, 1, 1 視角，採用 cairosvg 引擎，UUID 檔名隔離)
     img_path = None
     image_error = None
     
@@ -195,18 +195,16 @@ def parse_cad_with_screenshot(file_path: str) -> Dict[str, Any]:
         if not os.path.exists(svg_path) or os.path.getsize(svg_path) <= 0:
             raise FileNotFoundError("CadQuery 未能成功產出有效 SVG 檔案。")
 
-        if HAS_SVGLIB:
-            drawing = svg2rlg(svg_path)
-            if drawing:
-                renderPM.drawToFile(drawing, png_path, fmt="PNG")
-                if is_valid_image(png_path):
-                    img_path = png_path
-                else:
-                    raise ValueError("svglib 產出之 PNG 檔無效或為 0-byte。")
+        if HAS_CAIROSVG:
+            # 採用 cairosvg 直接進行 SVG -> PNG 轉譯
+            cairosvg.svg2png(url=svg_path, write_to=png_path, output_width=800, output_height=600)
+            
+            if is_valid_image(png_path):
+                img_path = png_path
             else:
-                raise ValueError("svglib 無法解析此 SVG 向量路徑。")
+                raise ValueError("cairosvg 產出之 PNG 檔無效或為 0-byte。")
         else:
-            raise ModuleNotFoundError("環境缺少 svglib/reportlab 轉譯套件。")
+            raise ModuleNotFoundError("環境缺少 cairosvg 轉譯套件。")
 
     except Exception as e_img:
         image_error = f"{type(e_img).__name__}: {str(e_img)}"
