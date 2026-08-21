@@ -1,7 +1,8 @@
 streamlit
 cadquery
+ezdxf
 openpyxl
-Pillow
 python-docx
+Pillow
 cairosvg
-numpy
+pypdf
