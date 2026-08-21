@@ -1,9 +1,10 @@
 """
 app.py - Streamlit 網頁介面程式
-Version: v2.1.3_20260820
-Description: 提供 CAD 辨識工具與表頭輸入欄位。
-             採用方案 1 原生輸入框，去除欄位名稱 (寫入 BX 欄位) 字樣，
-             頂端新增 Tab 鍵切換提示，支援無條件進位整數尺寸預覽，
+Version: v2.2.0_20260821
+Description: 提供 CAD 報價辨識工具。
+             預設採用 OBB (最小素材包容盒) 計算素材尺寸，附雙模式 SVG 示意對比圖，
+             Markdown 顯示轉義星號 (\\.replace("*", "\\*")) 解決 62209 顯示錯誤，
+             採用方案 1 原生輸入框帶 Tab 切換提示，
              一鍵重置 Widget Key，頁尾含個人頭像徽章 (Design by Max)。
 """
 
@@ -79,7 +80,7 @@ def inject_custom_elements():
     }}
     </style>
     
-    <div class="version-badge-left">Version: v2.1.3_20260820</div>
+    <div class="version-badge-left">Version: v2.2.0_20260821</div>
     
     <div class="custom-footer-max">
         {avatar_html}
@@ -112,7 +113,7 @@ def reset_session():
     st.session_state.uploader_key_num += 1
 
 
-st.set_page_config(page_title="CAD 報價辨識工具 (v2.1.3)", page_icon="⚙️", layout="centered")
+st.set_page_config(page_title="CAD 報價辨識工具 (v2.2.0)", page_icon="⚙️", layout="centered")
 
 # 載入懸浮元件
 inject_custom_elements()
@@ -134,7 +135,7 @@ if "mime_type" not in st.session_state:
 if "temp_files_list" not in st.session_state:
     st.session_state.temp_files_list = []
 
-# 新增 B4~B7 表頭資訊輸入區塊 (方案 1 原生輸入框 + Tab 切換提示)
+# 新增 B4~B7 表頭資訊輸入區塊
 with st.expander("📝 客戶與報價表頭資訊填寫 (選填，可直接留空)", expanded=True):
     st.caption("💡 提示：輸入完畢後，按鍵盤 **`Tab`** 鍵可快速切換至下一個輸入欄位。")
     col_c1, col_c2 = st.columns(2)
@@ -144,6 +145,32 @@ with st.expander("📝 客戶與報價表頭資訊填寫 (選填，可直接留�
     with col_c2:
         contact_input = st.text_input("聯絡人", key=f"contact_{st.session_state.uploader_key_num}")
         fax_input = st.text_input("傳真", key=f"fax_{st.session_state.uploader_key_num}")
+
+# 新增 OBB / AABB 素材計算模式選擇區塊與圖示說明卡片
+with st.expander("📐 加工素材計算模式設定 (內定 OBB 模式)", expanded=True):
+    calc_mode_selected = st.radio(
+        "選擇素材尺寸計算演算法：",
+        options=["OBB", "AABB"],
+        format_func=lambda x: "☑ 最小素材尺寸模式 (OBB) - 【系統內定預設】" if x == "OBB" else "⚪ 標準投影外框模式 (AABB)",
+        key=f"mode_{st.session_state.uploader_key_num}"
+    )
+
+    # 示意圖卡片對比說明
+    col_img1, col_img2 = st.columns(2)
+    with col_img1:
+        st.markdown("""
+        **【OBB 最小素材包容盒】**
+        * 貼合零件幾何方向旋轉量測
+        * 素材精確省料 (如傾斜零件估得 4mm)
+        * **適用**：CNC 實體備料估價
+        """, unsafe_allow_html=True)
+    with col_img2:
+        st.markdown("""
+        **【AABB 標準投影外框】**
+        * 沿世界座標軸 (X/Y/Z) 垂直外包
+        * 包含傾斜投影落差 (如傾斜零件估得 9mm)
+        * **適用**：外箱體積、正交零件估價
+        """, unsafe_allow_html=True)
 
 uploaded_files = st.file_uploader(
     "上傳 CAD 圖檔 (可多選)", 
@@ -171,7 +198,7 @@ if uploaded_files:
                 tmp_path = tmp_file.name
                 st.session_state.temp_files_list.append(tmp_path)
 
-            result = parse_cad_with_screenshot(tmp_path)
+            result = parse_cad_with_screenshot(tmp_path, mode=calc_mode_selected)
             result["file_name"] = uploaded_file.name
             parsed_results.append(result)
 
@@ -191,7 +218,6 @@ if uploaded_files:
         excel_tmp.close()
         st.session_state.temp_files_list.append(excel_path)
 
-        # 整理表頭填寫資訊帶入 generate_excel_report
         header_info = {
             "customer": customer_input,
             "contact": contact_input,
@@ -213,9 +239,12 @@ if st.session_state.parsed_results:
     st.subheader("📋 辨識結果預覽")
     for res in st.session_state.parsed_results:
         if res.get("status") == "success":
-            with st.expander(f"📄 {res['file_name']} - 【尺寸：{res['dimensions_str']} mm】"):
+            # 方案 A: 針對 Markdown 顯示進行星號反斜線轉義 (\*)，徹底避免 Markdown 斜體解析吃掉星號變 62209
+            display_dims_escaped = res['dimensions_str'].replace("*", "\\*")
+            
+            with st.expander(f"📄 {res['file_name']} - 【尺寸：{display_dims_escaped} mm】"):
                 st.write(f"**品名 (檔名)**：{res['file_name']}")
-                st.write(f"**尺寸 (長*寬*高，整數無條件進位)**：{res['dimensions_str']}")
+                st.write(f"**尺寸 (長\\*寬\\*高，無條件進位)**：{display_dims_escaped}")
                 st.write(f"**拆解數值**：長 {res.get('length')} / 寬 {res.get('width')} / 高 {res.get('height')}")
                 st.write(f"**單位**：{res['unit']}")
         else:
