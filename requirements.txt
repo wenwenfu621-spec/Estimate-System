@@ -6,3 +6,4 @@ python-docx
 Pillow
 cairosvg
 pypdf
+pypdfium2
