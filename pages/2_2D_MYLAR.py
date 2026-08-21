@@ -1,6 +1,6 @@
 """
 pages/2_2D_MYLAR.py - 2D Mylar / 模切材料快速報價頁面
-Version: v2.8.6_20260821
+Version: v2.8.7_20260821
 Description: 支援 PDF / DXF 混合上傳，具備 file_id 隔離、嚴格的 Excel 匯出閘門與零假值防呆。
 """
 
@@ -129,9 +129,9 @@ if uploaded_2d_files:
                     res["length"] = l_val
                     res["width"] = w_val
                     res["dimensions_str"] = f"{l_val}*{w_val}"
-                    res["confirmed"] = False  # 必須人工確認
+                    res["confirmed"] = False
                 else:
-                    # 辨識失敗：設定為 None / 0，不預填假尺寸
+                    # 辨識失敗或無文字層時，歸零且不預填假尺寸
                     res["length"] = 0.0
                     res["width"] = 0.0
                     res["confirmed"] = False
@@ -139,7 +139,7 @@ if uploaded_2d_files:
 
             progress_bar.progress((idx + 1) / len(uploaded_2d_files))
 
-        status_text.success("🎉 2D 檔案辨識完成！請在下方確認或手動輸入尺寸。")
+        status_text.success("🎉 2D 檔案處理完成！請在下方進行確認或手動輸入尺寸。")
         st.session_state.parsed_2d_results = parsed_results
 
 if st.session_state.parsed_2d_results:
@@ -176,7 +176,6 @@ if st.session_state.parsed_2d_results:
         with col_u2:
             user_w = st.number_input(f"Width (mm)", min_value=0.0, value=default_w, step=1.0, key=f"w_{file_id}")
         with col_u3:
-            # 只有當 Length > 0 且 Width > 0 時才允許勾選確認採用
             can_check = (user_l > 0 and user_w > 0)
             is_conf = st.checkbox(f"確認採用", value=res.get("confirmed", False) and can_check, disabled=not can_check, key=f"conf_{file_id}")
 
@@ -194,7 +193,6 @@ if st.session_state.parsed_2d_results:
         res["net_area"] = gross_area
         res["confirmed"] = is_conf
 
-        # 檢查是否準備就緒
         is_ready = (final_l > 0 and final_w > 0 and is_conf)
         if not is_ready:
             reason = []
@@ -208,7 +206,6 @@ if st.session_state.parsed_2d_results:
 
     st.markdown("---")
     
-    # 集中匯出閘門 (Excel Export Gate)
     all_ready = (len(updated_results) > 0 and len(incomplete_items) == 0)
 
     if all_ready:
