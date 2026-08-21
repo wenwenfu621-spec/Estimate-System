@@ -1,4 +1,3 @@
-# packages.txt - Version: v2.5.1_20260821
 libgl1
 libglu1-mesa
 libx11-6
